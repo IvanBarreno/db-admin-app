@@ -1,0 +1,15 @@
+<!--
+  SqlAdmin.Core
+  =============
+  The heart of the application: contracts (interfaces), domain models, and pure logic
+  such as template rendering, batch splitting, and the execution engine.
+
+  RULE: this project references NOTHING from ASP.NET, SqlClient, or EF Core.
+  If you ever feel the need to add such a reference here, the code belongs in
+  Infrastructure or an Engines.* project instead.
+
+  (TargetFramework, Nullable, etc. come from ../../Directory.Build.props)
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+</Project>

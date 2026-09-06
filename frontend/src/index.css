@@ -1,0 +1,11 @@
+/* Tailwind v4: this single import pulls in the reset (preflight) and enables every utility class.
+   No tailwind.config.js — customisation happens in CSS with @theme when we need it. */
+@import "tailwindcss";
+
+/* Project-wide defaults. Utilities in JSX override these per element. */
+@layer base {
+  html {
+    /* System font stack; small internal tool, no web fonts to load. */
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+}

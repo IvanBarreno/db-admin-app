@@ -1,0 +1,31 @@
+<!--
+  SqlAdmin.Integration.Tests
+  ==========================
+  Slower tests that talk to a REAL SQL Server (via Testcontainers in Docker, added in Phase 4).
+  Kept separate from unit tests so `dotnet test tests/SqlAdmin.Core.Tests` stays instant.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SqlAdmin.Core\SqlAdmin.Core.csproj" />
+    <ProjectReference Include="..\..\src\SqlAdmin.Engines.SqlServer\SqlAdmin.Engines.SqlServer.csproj" />
+    <ProjectReference Include="..\..\src\SqlAdmin.Infrastructure\SqlAdmin.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

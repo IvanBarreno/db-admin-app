@@ -1,0 +1,34 @@
+<!--
+  Directory.Build.props
+  =====================
+  MSBuild automatically imports this file into EVERY project below this folder.
+  Anything we put here applies to all six projects, so we don't repeat it in each .csproj.
+
+  This is also the single place to bump the .NET version later:
+  change <TargetFramework> to net10.0 once the .NET 10 SDK is installed.
+-->
+<Project>
+
+  <PropertyGroup>
+    <!-- The .NET version every project compiles against. -->
+    <TargetFramework>net9.0</TargetFramework>
+
+    <!-- C# language quality-of-life settings -->
+    <Nullable>enable</Nullable>            <!-- string vs string? — the compiler tracks nulls for us -->
+    <ImplicitUsings>enable</ImplicitUsings> <!-- System, System.Linq, System.Threading.Tasks, ... imported everywhere -->
+    <LangVersion>latest</LangVersion>
+
+    <!-- Treat warnings as errors: keeps the codebase clean from day one.
+         We can relax specific warnings with <NoWarn> if one gets annoying. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Produces XML docs from /// comments; needed for OpenAPI descriptions later.
+         CS1591 = "missing XML comment on public member" — we don't want to be forced to document everything. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!-- Deterministic builds: same source ⇒ byte-identical output. Good habit for CI. -->
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+</Project>

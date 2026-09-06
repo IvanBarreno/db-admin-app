@@ -1,0 +1,15 @@
+<!--
+  SqlAdmin.Infrastructure
+  =======================
+  Concrete implementations of Core contracts that are NOT database-engine specific:
+    - configuration loading (servers.json + servers.local.json + secrets)
+    - the YAML operation loader and registry
+    - the EF Core audit store (SQLite now, SQL Server later)
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SqlAdmin.Core\SqlAdmin.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,30 @@
+<!--
+  SqlAdmin.Core.Tests
+  ===================
+  Fast unit tests (xUnit) for the pure logic in Core: template rendering,
+  GO batch splitting, registry lookups, the destructive guard. No database needed.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>   <!-- never publish a test project as a NuGet package -->
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />       <!-- code coverage -->
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" /> <!-- lets `dotnet test` discover tests -->
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- "global using Xunit;" for every file in this project -->
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SqlAdmin.Core\SqlAdmin.Core.csproj" />
+  </ItemGroup>
+
+</Project>

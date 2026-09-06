@@ -1,0 +1,31 @@
+# ---------- .NET ----------
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+*.trx
+
+# ---------- Node / Vite ----------
+node_modules/
+frontend/dist/
+# The API serves the built frontend from here; it is produced by build/publish.ps1, never edited by hand.
+src/SqlAdmin.Api/wwwroot/
+
+# ---------- Personal / runtime files (see plan §7) ----------
+# Per-DBA overrides: auth mode, private dev servers. Never commit.
+servers.local.json
+# Local audit database, permission snapshots and log files live next to the exe.
+audit.db
+audit.db-*
+snapshots/
+logs/
+# Secrets belong in env vars / `dotnet user-secrets` / Credential Manager, never in files.
+.env
+*.pfx
+
+# ---------- Editors / OS ----------
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,16 @@
+<!--
+  SqlAdmin.Engines.SqlServer
+  ==========================
+  Implements the Core "IDatabaseEngine" contract for SQL Server and Azure SQL
+  using Microsoft.Data.SqlClient. This is the ONLY project that knows about
+  SqlConnection / SqlCommand.
+
+  A future Postgres engine would be a sibling project: SqlAdmin.Engines.Postgres.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\SqlAdmin.Core\SqlAdmin.Core.csproj" />
+  </ItemGroup>
+
+</Project>

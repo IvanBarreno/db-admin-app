@@ -1,0 +1,72 @@
+<!--
+  SqlAdmin.Api
+  ============
+  The executable. Hosts the HTTP API (ASP.NET Core / Kestrel), wires everything
+  together with dependency injection, and serves the built React app from wwwroot/.
+
+  Sdk="Microsoft.NET.Sdk.Web" (instead of plain Microsoft.NET.Sdk) pulls in the
+  ASP.NET Core shared framework and web-specific build behaviour.
+-->
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <!-- Name of the produced executable: SqlAdmin.exe on Windows, SqlAdmin on macOS/Linux. -->
+    <AssemblyName>SqlAdmin</AssemblyName>
+    <!-- Default namespace for new files created inside this project. -->
+    <RootNamespace>SqlAdmin.Api</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SqlAdmin.Core\SqlAdmin.Core.csproj" />
+    <ProjectReference Include="..\SqlAdmin.Infrastructure\SqlAdmin.Infrastructure.csproj" />
+    <ProjectReference Include="..\SqlAdmin.Engines.SqlServer\SqlAdmin.Engines.SqlServer.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Copy the operation YAML files and the server config next to the exe on build/publish.
+      "PreserveNewest" = only copy when the source changed.
+      servers.local.json is optional (each DBA creates their own) so we don't fail if missing.
+    -->
+    <None Update="operations\**\*.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="servers.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="servers.local.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('servers.local.json')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.*" />
+    <PackageReference Include="Scalar.AspNetCore" Version="2.17.2" />
+  </ItemGroup>
+
+  <!--
+    Frontend integration for `dotnet publish`.
+    ==========================================
+    Before the publish step runs, build the React app with pnpm and copy the output into
+    wwwroot/, so the published folder (or single exe) carries the UI with it.
+    Plain `dotnet build` / `dotnet run` skip this: in development the UI runs on Vite.
+    Set -p:SkipFrontend=true to publish the API alone (e.g. when wwwroot/ is already fresh).
+  -->
+  <PropertyGroup>
+    <FrontendDir>$(MSBuildProjectDirectory)/../../frontend</FrontendDir>
+    <SkipFrontend Condition="'$(SkipFrontend)' == ''">false</SkipFrontend>
+  </PropertyGroup>
+
+  <Target Name="BuildFrontend" BeforeTargets="PrepareForPublish" Condition="'$(SkipFrontend)' != 'true'">
+    <Message Importance="high" Text="Building frontend with pnpm..." />
+    <Exec Command="pnpm install --frozen-lockfile" WorkingDirectory="$(FrontendDir)" />
+    <Exec Command="pnpm build" WorkingDirectory="$(FrontendDir)" />
+
+    <!-- Refresh wwwroot: remove the old bundle, copy the new one. -->
+    <RemoveDir Directories="$(MSBuildProjectDirectory)/wwwroot" />
+    <ItemGroup>
+      <FrontendDist Include="$(FrontendDir)/dist/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(FrontendDist)" DestinationFiles="@(FrontendDist->'$(MSBuildProjectDirectory)/wwwroot/%(RecursiveDir)%(Filename)%(Extension)')" />
+
+    <!-- wwwroot/ was empty at evaluation time, so tell the publish step about the files we just created. -->
+    <ItemGroup>
+      <Content Include="$(MSBuildProjectDirectory)/wwwroot/**/*" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+
+</Project>
