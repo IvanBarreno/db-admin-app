@@ -28,6 +28,30 @@ Dependency rule: `Api → Infrastructure → Core` and `Api → Engines.SqlServe
 - Node.js 22+ and **pnpm**
 - A SQL Server to test against (Developer Edition, LocalDB, or Docker)
 
+## Configure servers and secrets
+
+The server list lives in [src/SqlAdmin.Api/servers.json](src/SqlAdmin.Api/servers.json) and is committed. It contains secret **names** only. Set the secret **values** once per machine:
+
+```bash
+# development machine (stored outside the repo by the .NET SDK)
+cd src/SqlAdmin.Api
+dotnet user-secrets set AZ_MAIN_USER "your-sql-login"
+dotnet user-secrets set AZ_MAIN_PASS "your-password"
+
+# See current secrets
+cd src/SqlAdmin.Api && dotnet user-secrets list
+
+# DBA machine running the published exe: environment variables with the same names
+```
+
+Personal overrides (for example, using Entra ID on a server where the shared default is SQL auth) go in `servers.local.json` next to `servers.json`. It is git-ignored:
+
+```json
+{ "Servers": { "Overrides": { "AZ-MAIN": { "Auth": "EntraId" } } } }
+```
+
+A mistake in either file stops the API at startup with a list of problems.
+
 ## Run in development
 
 Two terminals:
