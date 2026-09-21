@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { BrowserRouter } from 'react-router'
 import './index.css'
 import App from './App.tsx'
 
@@ -18,9 +19,12 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {/* Every component below can now call TanStack Query hooks. */}
+    {/* Every component below can now call TanStack Query hooks and use client-side routing.
+        BrowserRouter uses real URLs (/audit, /sql); the API's SPA fallback serves index.html for them. */}
     <QueryClientProvider client={queryClient}>
-      <App />
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,
 )
