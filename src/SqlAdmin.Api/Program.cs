@@ -9,11 +9,13 @@
 //   3. app.Run() = start Kestrel and block until Ctrl+C / shutdown
 
 using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 using SqlAdmin.Api.Endpoints;
 using SqlAdmin.Api.Errors;
 using SqlAdmin.Engines.SqlServer;
 using SqlAdmin.Infrastructure;
+using SqlAdmin.Infrastructure.Audit;
 
 var builder = WebApplication.CreateBuilder(args);
 // CreateBuilder already did a lot for us:
@@ -74,6 +76,13 @@ builder.Services.AddSqlAdminInfrastructure(builder.Configuration);
 //    in and the response on the way out, like layers of an onion.
 // ---------------------------------------------------------------------------
 var app = builder.Build();
+
+// Apply pending EF Core migrations on startup: audit.db is created/updated automatically,
+// no manual `dotnet ef database update` step for each DBA machine.
+using (var scope = app.Services.CreateScope())
+{
+    scope.ServiceProvider.GetRequiredService<AuditDbContext>().Database.Migrate();
+}
 
 // Turns exceptions into ProblemDetails responses instead of a blank 500 or a stack-trace page.
 app.UseExceptionHandler();

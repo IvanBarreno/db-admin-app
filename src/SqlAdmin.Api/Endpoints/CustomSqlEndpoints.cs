@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using SqlAdmin.Api.Contracts;
+using SqlAdmin.Core.Audit;
 using SqlAdmin.Core.Engines;
 using SqlAdmin.Core.Execution;
 
@@ -10,7 +11,11 @@ public static class CustomSqlEndpoints
 {
     public static IEndpointRouteBuilder MapCustomSqlEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPost("/api/custom-sql", async (CustomSqlRequest request, IServerConnectionFactory connections, CancellationToken ct) =>
+        app.MapPost("/api/custom-sql", async (
+                CustomSqlRequest request,
+                IServerConnectionFactory connections,
+                IAuditStore auditStore,
+                CancellationToken ct) =>
             {
                 var stopwatch = Stopwatch.StartNew();
 
@@ -32,6 +37,18 @@ public static class CustomSqlEndpoints
                     Messages: result.Messages,
                     FailedBatchIndex: result.FailedBatchIndex,
                     Error: result.Error);
+
+                // Audited regardless of outcome: a failed run is still a run against a real server.
+                await auditStore.RecordAsync(new AuditEntry
+                {
+                    ExecutedAtUtc = DateTimeOffset.UtcNow,
+                    ExecutedBy = Environment.UserName,
+                    ServerName = request.ServerName,
+                    Database = request.Database,
+                    Sql = request.Sql,
+                    Status = response.Success ? "Success" : "Failed",
+                    Detail = response.Error,
+                }, ct);
 
                 return TypedResults.Ok(response);
             })

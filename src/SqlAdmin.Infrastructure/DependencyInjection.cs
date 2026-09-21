@@ -1,8 +1,11 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using SqlAdmin.Core.Audit;
 using SqlAdmin.Core.Config;
 using SqlAdmin.Core.Engines;
+using SqlAdmin.Infrastructure.Audit;
 using SqlAdmin.Infrastructure.Config;
 using SqlAdmin.Infrastructure.Engines;
 
@@ -30,6 +33,11 @@ public static class DependencyInjection
         services.AddSingleton<ISecretResolver, ConfigurationSecretResolver>();
         services.AddSingleton<IEngineRegistry, EngineRegistry>();
         services.AddSingleton<IServerConnectionFactory, ServerConnectionFactory>();
+
+        // --- Audit log: SQLite next to the exe, one file, append-only ---
+        var auditDbPath = configuration["AuditDb:Path"] ?? "audit.db";
+        services.AddDbContext<AuditDbContext>(options => options.UseSqlite($"Data Source={auditDbPath}"));
+        services.AddScoped<IAuditStore, EfAuditStore>();
 
         return services;
     }
