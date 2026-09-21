@@ -1,40 +1,66 @@
+import { NavLink, Route, Routes } from 'react-router'
 import { usePing } from './api/ping'
+import ServersPage from './pages/ServersPage'
+import CustomSqlPage from './pages/CustomSqlPage'
 
 /**
- * Phase 0 App: a header with a live "API status" badge.
- * Pages, routing and the real layout arrive in Phase 1; this only proves the chain
- * React → TanStack Query → Vite proxy → Kestrel → C# handler → JSON → React.
+ * Application shell: header with navigation and the API status badge, then the page
+ * for the current URL. Pages are added to <Routes> as the phases progress.
  */
 export default function App() {
-  const ping = usePing()
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
-        <h1 className="text-lg font-semibold">SQL Admin Console</h1>
-        <ApiStatus
-          state={ping.isPending ? 'checking' : ping.isError ? 'down' : 'up'}
-          detail={ping.data ? `${ping.data.environment} · v${ping.data.version}` : ping.error?.message}
-        />
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
+          <div className="flex items-center gap-8">
+            <h1 className="text-lg font-semibold">SQL Admin Console</h1>
+            <nav className="flex gap-4 text-sm">
+              <NavItem to="/">Servers</NavItem>
+              <NavItem to="/sql">Custom SQL</NavItem>
+              {/* Phase 1 continues: <NavItem to="/audit">Audit log</NavItem> */}
+            </nav>
+          </div>
+          <ApiStatusBadge />
+        </div>
       </header>
 
-      <main className="mx-auto max-w-5xl p-6">
-        <p className="text-slate-600">
-          Phase 0 skeleton. If the badge above is green, the frontend is talking to the .NET API.
-        </p>
+      <main className="mx-auto max-w-6xl p-6">
+        <Routes>
+          <Route path="/" element={<ServersPage />} />
+          <Route path="/sql" element={<CustomSqlPage />} />
+          <Route path="*" element={<p className="text-slate-500">Page not found.</p>} />
+        </Routes>
       </main>
     </div>
   )
 }
 
-/** Small coloured pill: green when the API answers, red when it doesn't, grey while checking. */
-function ApiStatus({ state, detail }: { state: 'checking' | 'up' | 'down'; detail?: string }) {
+/** NavLink knows whether its route is active, so we can style the current page. */
+function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <NavLink
+      to={to}
+      end
+      className={({ isActive }) =>
+        `rounded px-2 py-1 ${isActive ? 'bg-slate-100 font-medium text-slate-900' : 'text-slate-600 hover:text-slate-900'}`
+      }
+    >
+      {children}
+    </NavLink>
+  )
+}
+
+/** Green when the API answers, red when it doesn't, grey while checking. */
+function ApiStatusBadge() {
+  const ping = usePing()
+  const state = ping.isPending ? 'checking' : ping.isError ? 'down' : 'up'
+  const detail = ping.data ? `${ping.data.environment} · v${ping.data.version}` : ping.error?.message
+
   const styles = {
     checking: 'bg-slate-100 text-slate-600 ring-slate-300',
     up: 'bg-emerald-50 text-emerald-700 ring-emerald-300',
     down: 'bg-red-50 text-red-700 ring-red-300',
   }[state]
-
   const label = { checking: 'Checking API…', up: 'API online', down: 'API offline' }[state]
 
   return (

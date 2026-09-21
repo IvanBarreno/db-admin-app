@@ -1,4 +1,4 @@
-<!--
+﻿<!--
   SqlAdmin.Api
   ============
   The executable. Hosts the HTTP API (ASP.NET Core / Kestrel), wires everything
@@ -14,6 +14,7 @@
     <AssemblyName>SqlAdmin</AssemblyName>
     <!-- Default namespace for new files created inside this project. -->
     <RootNamespace>SqlAdmin.Api</RootNamespace>
+    <UserSecretsId>238ac4e1-a26b-4bb1-bf36-dfa088100b87</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
@@ -36,6 +37,10 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.*" />
     <PackageReference Include="Scalar.AspNetCore" Version="2.17.2" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.*">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
   <!--
@@ -61,7 +66,7 @@
     <ItemGroup>
       <FrontendDist Include="$(FrontendDir)/dist/**/*" />
     </ItemGroup>
-    <Copy SourceFiles="@(FrontendDist)" DestinationFiles="@(FrontendDist->'$(MSBuildProjectDirectory)/wwwroot/%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(FrontendDist)" DestinationFiles="@(FrontendDist-&gt;'$(MSBuildProjectDirectory)/wwwroot/%(RecursiveDir)%(Filename)%(Extension)')" />
 
     <!-- wwwroot/ was empty at evaluation time, so tell the publish step about the files we just created. -->
     <ItemGroup>

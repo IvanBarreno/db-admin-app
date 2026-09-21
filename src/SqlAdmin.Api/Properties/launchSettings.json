@@ -1,15 +1,10 @@
 {
-  // launchSettings.json — how `dotnet run` / `dotnet watch` / the IDE "Run" button start the app.
-  // Only used on the dev machine; it is NOT shipped with the published exe.
   "$schema": "https://json.schemastore.org/launchsettings.json",
   "profiles": {
     "SqlAdmin.Api": {
       "commandName": "Project",
       "dotnetRunMessages": true,
-      // Don't open a browser on the API port; in development the UI lives on Vite's port (5173).
       "launchBrowser": false,
-      // No "applicationUrl" here on purpose: the listen address comes from the Kestrel section
-      // in appsettings.json so dev and the published exe bind to exactly the same loopback URL.
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }

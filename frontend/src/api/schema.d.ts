@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/custom-sql": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run free-form SQL against a server (and optional database), batch by batch */
+        post: operations["ExecuteCustomSql"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ping": {
         parameters: {
             query?: never;
@@ -24,16 +41,151 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Configured servers (never includes credentials) */
+        get: operations["ListServers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/servers/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One server by name */
+        get: operations["GetServer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/servers/{name}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open a connection and report server version, edition and login identity */
+        post: operations["TestServerConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/servers/{name}/databases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** User databases on the server, for pickers */
+        get: operations["ListDatabases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @enum {unknown} */
+        AuthMode: "Sql" | "Windows" | "EntraId";
+        ConnectionTestResult: {
+            success: boolean;
+            /** Format: int64 */
+            elapsedMs: number;
+            info: components["schemas"]["ServerInfo"];
+            error: string | null;
+        };
+        CustomSqlRequest: {
+            serverName: string;
+            database: string | null;
+            sql: string;
+        };
+        CustomSqlResult: {
+            success: boolean;
+            /** Format: int64 */
+            elapsedMs: number;
+            resultSets: components["schemas"]["CustomSqlResultSet"][];
+            messages: string[];
+            /** Format: int32 */
+            failedBatchIndex: number | null;
+            error: string | null;
+        };
+        CustomSqlResultSet: {
+            /** Format: int32 */
+            batchIndex: number;
+            columns: string[];
+            rows: unknown[][];
+        };
+        DatabaseInfo: {
+            name: string;
+            state: string;
+            owner: string | null;
+            isOnline: boolean;
+        };
+        EngineCapabilities: {
+            supportsUseDatabase: boolean;
+            supportsServerLogins: boolean;
+            supportsWindowsAuth: boolean;
+            supportsAgentJobs: boolean;
+            supportsContainedUsers: boolean;
+            supportsBatchSeparator: boolean;
+        };
         PingResponse: {
             status: string;
             environment: string;
             /** Format: date-time */
             serverTimeUtc: string;
             version: string;
+        };
+        /** @enum {unknown} */
+        ServerEnvironment: "Development" | "Test" | "Production";
+        ServerInfo: {
+            serverName: string;
+            version: string;
+            edition: string;
+            loginName: string;
+            currentDatabase: string;
+            isSysAdmin: boolean;
+        } | null;
+        ServerSummary: {
+            name: string;
+            host: string;
+            /** Format: int32 */
+            port: number | null;
+            engine: string;
+            engineDisplayName: string;
+            auth: components["schemas"]["AuthMode"];
+            environment: components["schemas"]["ServerEnvironment"];
+            defaultDatabase: string | null;
+            tags: string[];
+            capabilities: components["schemas"]["EngineCapabilities"];
         };
     };
     responses: never;
@@ -44,6 +196,30 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    ExecuteCustomSql: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomSqlRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomSqlResult"];
+                };
+            };
+        };
+    };
     Ping: {
         parameters: {
             query?: never;
@@ -60,6 +236,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PingResponse"];
+                };
+            };
+        };
+    };
+    ListServers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerSummary"][];
+                };
+            };
+        };
+    };
+    GetServer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerSummary"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    TestServerConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionTestResult"];
+                };
+            };
+        };
+    };
+    ListDatabases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseInfo"][];
                 };
             };
         };

@@ -1,0 +1,53 @@
+{
+  // servers.json — the SHARED server list. Committed to the repo; contains NO secrets.
+  //
+  // Field reference (see ServersOptions.cs):
+  //   Engine          sqlserver | azuresql            (default from Defaults.Engine)
+  //   Auth            Sql | Windows | EntraId
+  //   UsernameSecret  NAME of the secret holding the SQL login   (Sql auth only)
+  //   PasswordSecret  NAME of the secret holding the password    (Sql auth only)
+  //   DefaultDatabase database to connect to by default; set it for Azure SQL logins without master access
+  //   Environment     Development | Test | Production   (Production ⇒ red banner + typed confirmations)
+  //
+  // Secret VALUES are set per machine, never here:
+  //   dev box:   cd src/SqlAdmin.Api && dotnet user-secrets set AZ_MAIN_USER "sqladmin"
+  //              dotnet user-secrets set AZ_MAIN_PASS "..."
+  //   DBA box:   environment variables AZ_MAIN_USER / AZ_MAIN_PASS
+  //
+  // Personal overrides (auth mode, private dev servers) go in servers.local.json (git-ignored):
+  //   { "Servers": { "Overrides": { "AZ-MAIN": { "Auth": "EntraId" } } } }
+
+  "Servers": {
+    "Defaults": {
+      "Engine": "sqlserver",
+      "Encrypt": true,
+      "TrustServerCertificate": false,
+      "CommandTimeoutSeconds": 30
+    },
+    "Items": [
+      {
+        "Name": "IB_Azure",
+        "Engine": "azuresql",
+        "Host": "ivan-barreno.database.windows.net",
+        "Auth": "Sql",
+        "UsernameSecret": "AZ_IB_USER",
+        "PasswordSecret": "AZ_IB_PASS",
+        "DefaultDatabase": "IB_DataBase",
+        "Environment": "Test",
+        "Tags": [ "azure", "personal", "test"]
+      },
+      {
+        "Name": "IB_LocalSQL",
+        "Engine": "sqlserver",
+        "Host": "192.168.3.81",
+        "Auth": "Sql",
+        "UsernameSecret": "LO_IB_USER",
+        "PasswordSecret": "LO_IB_PASS",
+        "DefaultDatabase": "master",
+        "Environment": "Development",
+        "TrustServerCertificate": true,
+        "Tags": [ "local", "personal", "test"]
+      }
+    ]
+  }
+}

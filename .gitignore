@@ -29,3 +29,5 @@ logs/
 .idea/
 .DS_Store
 Thumbs.db
+
+sql-admin-tool-plan.md
