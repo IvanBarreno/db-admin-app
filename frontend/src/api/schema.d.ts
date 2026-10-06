@@ -126,6 +126,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Operations available for a server, filtered by its engine */
+        get: operations["ListOperations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operations/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Render the operation's template; nothing executes */
+        post: operations["PreviewOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operations/{id}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the operation against a server (and optional database) */
+        post: operations["ExecuteOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -185,6 +236,46 @@ export interface components {
             supportsAgentJobs: boolean;
             supportsContainedUsers: boolean;
             supportsBatchSeparator: boolean;
+        };
+        OperationExecuteResult: {
+            success: boolean;
+            /** Format: int64 */
+            elapsedMs: number;
+            resultSets: components["schemas"]["CustomSqlResultSet"][];
+            messages: string[];
+            /** Format: int32 */
+            failedBatchIndex: number | null;
+            error: string | null;
+        };
+        OperationParameter: {
+            name: string;
+            type: components["schemas"]["OperationParameterType"];
+            required?: boolean;
+            default?: string | null;
+            choices?: string[] | null;
+        };
+        /** @enum {unknown} */
+        OperationParameterType: "Sysname" | "String" | "Int" | "Bool" | "Password" | "Choice" | "Database" | "Login";
+        OperationPreviewResult: {
+            operationId: string;
+            batches: string[];
+        };
+        OperationRequest: {
+            serverName: string;
+            database: string | null;
+            params: {
+                [key: string]: string;
+            };
+        };
+        /** @enum {unknown} */
+        OperationScope: "Server" | "Database" | "AllDatabases";
+        OperationSummary: {
+            id: string;
+            name: string;
+            category: string;
+            scope: components["schemas"]["OperationScope"];
+            destructive: boolean;
+            params: components["schemas"]["OperationParameter"][];
         };
         PingResponse: {
             status: string;
@@ -385,6 +476,119 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["DatabaseInfo"][];
                 };
+            };
+        };
+    };
+    ListOperations: {
+        parameters: {
+            query: {
+                server: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationSummary"][];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    PreviewOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreviewResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    ExecuteOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationExecuteResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

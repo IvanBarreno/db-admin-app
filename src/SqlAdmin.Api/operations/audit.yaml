@@ -1,0 +1,55 @@
+# operations/audit.yaml — read-only operations (§2 "Audit / read-only" in the plan).
+# One file per category; each entry under "operations:" is a full operation, not a fragment.
+
+operations:
+  - id: audit.login_status
+    name: "Login exists + status"
+    category: audit
+    scope: server
+    engines: [sqlserver, azuresql]
+    destructive: false
+    params:
+      - name: login_name
+        type: sysname
+        required: true
+    sql: |
+      SELECT name AS login_name, type_desc, is_disabled, create_date, modify_date,
+             default_database_name
+      FROM sys.server_principals
+      WHERE name = @login_name;
+
+  - id: audit.server_roles
+    name: "Server role memberships"
+    category: audit
+    scope: server
+    engines: [sqlserver, azuresql]
+    destructive: false
+    params:
+      - name: login_name
+        type: sysname
+        required: true
+    sql: |
+      SELECT r.name AS server_role, m.name AS login_name
+      FROM sys.server_role_members srm
+      JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+      JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+      WHERE m.name = @login_name
+      ORDER BY r.name;
+
+  - id: audit.database_permissions
+    name: "Explicit database permissions for a user"
+    category: audit
+    scope: database
+    engines: [sqlserver, azuresql]
+    destructive: false
+    params:
+      - name: user_name
+        type: sysname
+        required: true
+    sql: |
+      SELECT dp.permission_name, dp.state_desc, dp.class_desc,
+             OBJECT_NAME(dp.major_id) AS object_name
+      FROM sys.database_permissions dp
+      JOIN sys.database_principals u ON u.principal_id = dp.grantee_principal_id
+      WHERE u.name = @user_name
+      ORDER BY dp.permission_name;

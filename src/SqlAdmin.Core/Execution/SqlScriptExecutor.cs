@@ -23,9 +23,24 @@ public static class SqlScriptExecutor
     /// event on the generic <see cref="DbConnection"/> base type — before calling this method.
     /// </param>
     /// <param name="ct">Cancelled when the caller (e.g. the HTTP request) aborts.</param>
+    public static Task<ScriptResult> ExecuteAsync(
+        DbConnection connection,
+        IReadOnlyList<string> batches,
+        int commandTimeoutSeconds,
+        List<string> messages,
+        CancellationToken ct) => ExecuteAsync(connection, batches, [], commandTimeoutSeconds, messages, ct);
+
+    /// <summary>
+    /// Same as above, but binds <paramref name="parameterValues"/> onto every batch's command
+    /// that references them — used by operation templates, where <c>@name</c> placeholders are
+    /// real parameters shared across all batches of the rendered script. A fresh
+    /// <see cref="DbParameter"/> is created per command: ADO.NET parameter objects belong to
+    /// exactly one command, so they cannot be reused across batches.
+    /// </summary>
     public static async Task<ScriptResult> ExecuteAsync(
         DbConnection connection,
         IReadOnlyList<string> batches,
+        IReadOnlyList<(string Name, object Value)> parameterValues,
         int commandTimeoutSeconds,
         List<string> messages,
         CancellationToken ct)
@@ -38,6 +53,16 @@ public static class SqlScriptExecutor
             await using var command = connection.CreateCommand();
             command.CommandText = batchSql;
             command.CommandTimeout = commandTimeoutSeconds;
+            foreach (var (name, value) in parameterValues)
+            {
+                if (batchSql.Contains(name, StringComparison.Ordinal))
+                {
+                    var parameter = command.CreateParameter();
+                    parameter.ParameterName = name;
+                    parameter.Value = value;
+                    command.Parameters.Add(parameter);
+                }
+            }
 
             try
             {

@@ -1,8 +1,20 @@
 import { useState } from 'react'
-import type { CustomSqlResult } from '../api/customSql'
+
+/** Shape shared by CustomSqlResult and OperationExecuteResult — anything ResultsGrid can render. */
+export interface ScriptRunResult {
+  success: boolean
+  resultSets: readonly {
+    batchIndex: number
+    columns: readonly string[]
+    rows: readonly (readonly unknown[])[]
+  }[]
+  messages: readonly string[]
+  failedBatchIndex?: number | null
+  error?: string | null
+}
 
 /** Renders every result set as a tab (batch #N) plus provider messages and the failure, if any. */
-export function ResultsGrid({ result }: { result: CustomSqlResult }) {
+export function ResultsGrid({ result }: { result: ScriptRunResult }) {
   const [activeTab, setActiveTab] = useState(0)
   const sets = result.resultSets
 
@@ -54,7 +66,7 @@ export function ResultsGrid({ result }: { result: CustomSqlResult }) {
   )
 }
 
-function ResultTable({ resultSet }: { resultSet: CustomSqlResult['resultSets'][number] }) {
+function ResultTable({ resultSet }: { resultSet: ScriptRunResult['resultSets'][number] }) {
   return (
     <div className="max-h-[32rem] overflow-auto rounded border border-slate-200">
       <table className="min-w-full divide-y divide-slate-200 text-sm">
