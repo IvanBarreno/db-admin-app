@@ -105,6 +105,7 @@ if (app.Environment.IsDevelopment())
 app.MapPingEndpoints();
 app.MapServersEndpoints();
 app.MapCustomSqlEndpoints();
+app.MapAuditEndpoints();
 
 // ---------------------------------------------------------------------------
 // 4. Frontend — in production the built React app lives in wwwroot/ and is

@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from 'react-router'
 import { usePing } from './api/ping'
 import ServersPage from './pages/ServersPage'
 import CustomSqlPage from './pages/CustomSqlPage'
+import AuditLogPage from './pages/AuditLogPage'
 
 /**
  * Application shell: header with navigation and the API status badge, then the page
@@ -17,7 +18,7 @@ export default function App() {
             <nav className="flex gap-4 text-sm">
               <NavItem to="/">Servers</NavItem>
               <NavItem to="/sql">Custom SQL</NavItem>
-              {/* Phase 1 continues: <NavItem to="/audit">Audit log</NavItem> */}
+              <NavItem to="/audit">Audit log</NavItem>
             </nav>
           </div>
           <ApiStatusBadge />
@@ -28,6 +29,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<ServersPage />} />
           <Route path="/sql" element={<CustomSqlPage />} />
+          <Route path="/audit" element={<AuditLogPage />} />
           <Route path="*" element={<p className="text-slate-500">Page not found.</p>} />
         </Routes>
       </main>
