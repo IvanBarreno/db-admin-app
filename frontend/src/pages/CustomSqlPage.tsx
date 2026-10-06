@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { EnvBadge } from '../components/EnvBadge'
+import { ProductionBanner } from '../components/ProductionBanner'
 import { ResultsGrid } from '../components/ResultsGrid'
 import { useDatabases, useServers } from '../api/servers'
 import { useRunCustomSql } from '../api/customSql'
@@ -24,6 +25,8 @@ export default function CustomSqlPage() {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Custom SQL</h2>
+
+      {server?.environment === 'Production' && <ProductionBanner serverName={server.name} />}
 
       {servers.isPending && <p className="text-slate-500">Loading servers…</p>}
       {servers.isError && <p className="text-red-700">Could not load servers: {servers.error.message}</p>}
