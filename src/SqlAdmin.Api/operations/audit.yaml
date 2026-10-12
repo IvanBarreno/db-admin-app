@@ -10,7 +10,7 @@ operations:
     destructive: false
     params:
       - name: login_name
-        type: sysname
+        type: login
         required: true
     sql: |
       SELECT name AS login_name, type_desc, is_disabled, create_date, modify_date,
@@ -26,7 +26,7 @@ operations:
     destructive: false
     params:
       - name: login_name
-        type: sysname
+        type: login
         required: true
     sql: |
       SELECT r.name AS server_role, m.name AS login_name
@@ -44,7 +44,7 @@ operations:
     destructive: false
     params:
       - name: user_name
-        type: sysname
+        type: user
         required: true
     sql: |
       SELECT dp.permission_name, dp.state_desc, dp.class_desc,
@@ -53,3 +53,173 @@ operations:
       JOIN sys.database_principals u ON u.principal_id = dp.grantee_principal_id
       WHERE u.name = @user_name
       ORDER BY dp.permission_name;
+
+  - id: audit.server_permissions
+    name: "Explicit server permissions for a login"
+    category: audit
+    scope: server
+    engines: [sqlserver]
+    destructive: false
+    params:
+      - name: login_name
+        type: login
+        required: true
+    sql: |
+      SELECT sp.permission_name, sp.state_desc, sp.class_desc
+      FROM sys.server_permissions sp
+      JOIN sys.server_principals p ON p.principal_id = sp.grantee_principal_id
+      WHERE p.name = @login_name
+      ORDER BY sp.permission_name;
+
+  - id: audit.sysadmin_members
+    name: "Sysadmin role members"
+    category: audit
+    scope: server
+    engines: [sqlserver]
+    destructive: false
+    sql: |
+      SELECT m.name AS login_name, m.type_desc, m.is_disabled
+      FROM sys.server_role_members srm
+      JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+      JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+      WHERE r.name = N'sysadmin'
+      ORDER BY m.name;
+
+  - id: audit.active_sessions
+    name: "Active sessions for a login"
+    category: audit
+    scope: server
+    engines: [sqlserver]
+    destructive: false
+    params:
+      - name: login_name
+        type: login
+        required: true
+    sql: |
+      SELECT session_id, login_time, host_name, program_name, status, last_request_end_time
+      FROM sys.dm_exec_sessions
+      WHERE login_name = @login_name
+      ORDER BY login_time;
+
+  - id: audit.jobs_owned
+    name: "SQL Agent jobs owned by a login"
+    category: audit
+    scope: server
+    engines: [sqlserver]   # no SQL Agent on Azure SQL
+    destructive: false
+    params:
+      - name: login_name
+        type: login
+        required: true
+    sql: |
+      SELECT j.name AS job_name, j.enabled, j.date_created, j.date_modified
+      FROM msdb.dbo.sysjobs j
+      WHERE SUSER_SNAME(j.owner_sid) = @login_name
+      ORDER BY j.name;
+
+  - id: audit.databases_owned
+    name: "Databases owned by a login"
+    category: audit
+    scope: server
+    engines: [sqlserver, azuresql]
+    destructive: false
+    params:
+      - name: login_name
+        type: login
+        required: true
+    sql: |
+      SELECT name AS database_name, state_desc, recovery_model_desc, create_date
+      FROM sys.databases
+      WHERE SUSER_SNAME(owner_sid) = @login_name
+      ORDER BY name;
+
+  - id: audit.user_mapping
+    name: "Database user mapped to a login"
+    category: audit
+    scope: database
+    engines: [sqlserver, azuresql]
+    destructive: false
+    params:
+      - name: user_name
+        type: user
+        required: true
+    sql: |
+      SELECT u.name AS user_name, u.type_desc, u.create_date,
+             sp.name AS mapped_login, u.default_schema_name
+      FROM sys.database_principals u
+      LEFT JOIN sys.server_principals sp ON sp.sid = u.sid
+      WHERE u.name = @user_name;
+
+  - id: audit.database_roles
+    name: "Database role memberships for a user"
+    category: audit
+    scope: database
+    engines: [sqlserver, azuresql]
+    destructive: false
+    params:
+      - name: user_name
+        type: user
+        required: true
+    sql: |
+      SELECT r.name AS database_role, m.name AS user_name
+      FROM sys.database_role_members drm
+      JOIN sys.database_principals r ON r.principal_id = drm.role_principal_id
+      JOIN sys.database_principals m ON m.principal_id = drm.member_principal_id
+      WHERE m.name = @user_name
+      ORDER BY r.name;
+
+  - id: audit.database_roles_all
+    name: "Database role memberships for a user (all online databases)"
+    category: audit
+    scope: all_databases
+    engines: [sqlserver, azuresql]
+    destructive: false
+    params:
+      - name: user_name
+        type: string
+        required: true
+    sql: |
+      SELECT r.name AS database_role, m.name AS user_name
+      FROM sys.database_role_members drm
+      JOIN sys.database_principals r ON r.principal_id = drm.role_principal_id
+      JOIN sys.database_principals m ON m.principal_id = drm.member_principal_id
+      WHERE m.name = @user_name
+      ORDER BY r.name;
+
+  - id: audit.orphaned_users
+    name: "Orphaned users (no matching login)"
+    category: audit
+    scope: database
+    engines: [sqlserver]
+    destructive: false
+    sql: |
+      SELECT u.name AS user_name, u.type_desc, u.create_date
+      FROM sys.database_principals u
+      LEFT JOIN sys.server_principals sp ON sp.sid = u.sid
+      WHERE u.type IN ('S', 'U', 'G')
+        AND u.authentication_type_desc IN (N'INSTANCE', N'NONE')
+        AND u.principal_id > 4
+        AND sp.sid IS NULL
+      ORDER BY u.name;
+
+  - id: audit.schema_ownership
+    name: "Schemas and objects owned by a user"
+    category: audit
+    scope: database
+    engines: [sqlserver, azuresql]
+    destructive: false
+    params:
+      - name: user_name
+        type: user
+        required: true
+    sql: |
+      SELECT N'SCHEMA' AS kind, s.name AS name, NULL AS schema_name
+      FROM sys.schemas s
+      JOIN sys.database_principals u ON u.principal_id = s.principal_id
+      WHERE u.name = @user_name
+      UNION ALL
+      SELECT o.type_desc, o.name, SCHEMA_NAME(o.schema_id)
+      FROM sys.objects o
+      JOIN sys.database_principals u ON u.principal_id = o.principal_id
+      WHERE u.name = @user_name AND o.is_ms_shipped = 0
+      ORDER BY 1, 2;

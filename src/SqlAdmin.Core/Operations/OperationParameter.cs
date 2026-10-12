@@ -17,6 +17,8 @@ public enum OperationParameterType
     Database,
     /// <summary>A login name on the target server, for a picker.</summary>
     Login,
+    /// <summary>A user name in the selected database, for a picker (needs a database chosen).</summary>
+    User,
 }
 
 /// <summary>One parameter an operation's template expects, described for validation and for the

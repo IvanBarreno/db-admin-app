@@ -73,6 +73,25 @@ public static class ServersEndpoints
             .WithName("ListDatabases")
             .WithSummary("User databases on the server, for pickers");
 
+        // GET /api/servers/{name}/logins
+        group.MapGet("/{name}/logins", async (string name, IServerConnectionFactory connections, CancellationToken ct) =>
+            {
+                await using var conn = await connections.OpenAsync(name, database: null, ct);
+                return TypedResults.Ok(await conn.Engine.ListLoginsAsync(conn.Connection, ct));
+            })
+            .WithName("ListLogins")
+            .WithSummary("Server logins, for pickers");
+
+        // GET /api/servers/{name}/databases/{database}/users
+        // The database comes from the route, so the connection itself is opened against it.
+        group.MapGet("/{name}/databases/{database}/users", async (string name, string database, IServerConnectionFactory connections, CancellationToken ct) =>
+            {
+                await using var conn = await connections.OpenAsync(name, database, ct);
+                return TypedResults.Ok(await conn.Engine.ListDatabaseUsersAsync(conn.Connection, ct));
+            })
+            .WithName("ListDatabaseUsers")
+            .WithSummary("Users of one database, for pickers");
+
         return app;
     }
 }

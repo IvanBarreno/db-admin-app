@@ -26,14 +26,36 @@ public static class TemplateRenderer
 
     public static RenderedTemplate Render(
         OperationDefinition operation,
-        IReadOnlyDictionary<string, string?> values,
+        IReadOnlyDictionary<string, string?> supplied,
         ISqlDialect dialect)
     {
+        // Blank or missing values fall back to the YAML default, so optional parameters
+        // (e.g. a bool flag the DBA left on "—") are always bound and the SQL never meets an
+        // undeclared @variable.
+        var values = new Dictionary<string, string?>(supplied);
+        foreach (var param in operation.Params.Where(p => p.Default is not null))
+        {
+            if (string.IsNullOrWhiteSpace(values.GetValueOrDefault(param.Name))) values[param.Name] = param.Default;
+        }
+
         foreach (var param in operation.Params.Where(p => p.Required))
         {
             if (!values.TryGetValue(param.Name, out var value) || string.IsNullOrWhiteSpace(value))
             {
                 throw new TemplateRenderException($"Parameter '{param.Name}' is required.");
+            }
+        }
+
+        // A Choice value must be one of the declared choices. Templates may therefore concatenate
+        // it into dynamic SQL (e.g. GRANT <permission> ...) because it can only ever be a
+        // string the YAML author wrote.
+        foreach (var param in operation.Params.Where(p => p.Type == OperationParameterType.Choice))
+        {
+            var value = values.GetValueOrDefault(param.Name);
+            if (!string.IsNullOrWhiteSpace(value) && param.Choices?.Contains(value) != true)
+            {
+                throw new TemplateRenderException(
+                    $"Value for '{param.Name}' must be one of: {string.Join(", ", param.Choices ?? [])}.");
             }
         }
 

@@ -47,7 +47,8 @@ public static class YamlOperationLoader
         if (string.IsNullOrWhiteSpace(dto.Sql)) throw new OperationYamlException(file, "'sql' is required.");
         if (dto.Engines.Count == 0) throw new OperationYamlException(file, "'engines' must list at least one engine id.");
 
-        if (!Enum.TryParse<OperationScope>(dto.Scope, ignoreCase: true, out var scope))
+        // YAML says "all_databases"; the enum member is AllDatabases — drop underscores before parsing.
+        if (!Enum.TryParse<OperationScope>(dto.Scope?.Replace("_", ""), ignoreCase: true, out var scope))
         {
             throw new OperationYamlException(file,
                 $"operation '{dto.Id}': 'scope' must be one of server, database, all_databases — got '{dto.Scope}'.");
@@ -74,7 +75,7 @@ public static class YamlOperationLoader
         if (!Enum.TryParse<OperationParameterType>(p.Type, ignoreCase: true, out var type))
         {
             throw new OperationYamlException(file,
-                $"parameter '{p.Name}': 'type' must be one of sysname, string, int, bool, password, choice, database, login — got '{p.Type}'.");
+                $"parameter '{p.Name}': 'type' must be one of sysname, string, int, bool, password, choice, database, login, user — got '{p.Type}'.");
         }
 
         return new OperationParameter

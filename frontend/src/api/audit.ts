@@ -5,6 +5,17 @@ import { apiGet, type Schema } from './client'
 
 export type AuditEntry = Schema<'AuditEntryResponse'>
 
+export type AuditStep = Schema<'AuditStepResponse'>
+
+/** Steps of one audit entry; only fetched once the row is expanded (`enabled`). */
+export function useAuditSteps(id: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ['audit', id, 'steps'],
+    queryFn: ({ signal }) => apiGet<AuditStep[]>(`/api/audit/${id}/steps`, signal),
+    enabled,
+  })
+}
+
 export interface AuditFilters {
   executedBy?: string
   serverName?: string

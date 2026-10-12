@@ -88,6 +88,57 @@ public abstract class SqlClientEngineBase : IDatabaseEngine
         return result;
     }
 
+    public async Task<IReadOnlyList<LoginInfo>> ListLoginsAsync(DbConnection connection, CancellationToken ct)
+    {
+        // Skip roles (R), certificate/asymmetric-key logins (C, K) and the built-in ##...## and
+        // NT SERVICE\ / NT AUTHORITY\ principals: nobody manages those by hand.
+        const string sql = """
+            SELECT name, type_desc, is_disabled
+            FROM sys.server_principals
+            WHERE type IN ('S', 'U', 'G', 'E', 'X')
+              AND name NOT LIKE '##%'
+              AND name NOT LIKE 'NT SERVICE\\%'
+              AND name NOT LIKE 'NT AUTHORITY\\%'
+            ORDER BY name;
+            """;
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = sql;
+
+        var result = new List<LoginInfo>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            result.Add(new LoginInfo(reader.GetString(0), reader.GetString(1), reader.GetBoolean(2)));
+        }
+
+        return result;
+    }
+
+    public async Task<IReadOnlyList<DatabaseUserInfo>> ListDatabaseUsersAsync(DbConnection connection, CancellationToken ct)
+    {
+        // principal_id > 4 skips dbo, guest, INFORMATION_SCHEMA and sys. Types: S/U/G/E/X as for logins.
+        const string sql = """
+            SELECT name, type_desc
+            FROM sys.database_principals
+            WHERE type IN ('S', 'U', 'G', 'E', 'X')
+              AND principal_id > 4
+            ORDER BY name;
+            """;
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = sql;
+
+        var result = new List<DatabaseUserInfo>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            result.Add(new DatabaseUserInfo(reader.GetString(0), reader.GetString(1)));
+        }
+
+        return result;
+    }
+
     public IDisposable SubscribeToMessages(DbConnection connection, List<string> messages)
     {
         var sqlConnection = (SqlConnection)connection;

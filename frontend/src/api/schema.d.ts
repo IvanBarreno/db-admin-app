@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/{id}/steps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Steps (e.g. one per database) recorded for an audit entry */
+        get: operations["ListAuditSteps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ping": {
         parameters: {
             query?: never;
@@ -126,6 +143,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/servers/{name}/logins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Server logins, for pickers */
+        get: operations["ListLogins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/servers/{name}/databases/{database}/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Users of one database, for pickers */
+        get: operations["ListDatabaseUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/operations": {
         parameters: {
             query?: never;
@@ -193,6 +244,16 @@ export interface components {
             status: string;
             detail: string | null;
         };
+        AuditStepResponse: {
+            /** Format: int32 */
+            stepNo: number;
+            database: string | null;
+            action: string;
+            status: string;
+            /** Format: int32 */
+            rowsAffected: number | null;
+            message: string | null;
+        };
         /** @enum {unknown} */
         AuthMode: "Sql" | "Windows" | "EntraId";
         ConnectionTestResult: {
@@ -229,6 +290,10 @@ export interface components {
             owner: string | null;
             isOnline: boolean;
         };
+        DatabaseUserInfo: {
+            name: string;
+            type: string;
+        };
         EngineCapabilities: {
             supportsUseDatabase: boolean;
             supportsServerLogins: boolean;
@@ -236,6 +301,18 @@ export interface components {
             supportsAgentJobs: boolean;
             supportsContainedUsers: boolean;
             supportsBatchSeparator: boolean;
+        };
+        ExecutionStepDto: {
+            database: string;
+            status: string;
+            /** Format: int32 */
+            rowCount: number;
+            message: string | null;
+        };
+        LoginInfo: {
+            name: string;
+            type: string;
+            isDisabled: boolean;
         };
         OperationExecuteResult: {
             success: boolean;
@@ -246,6 +323,8 @@ export interface components {
             /** Format: int32 */
             failedBatchIndex: number | null;
             error: string | null;
+            /** @default null */
+            steps: components["schemas"]["ExecutionStepDto"][] | null;
         };
         OperationParameter: {
             name: string;
@@ -255,7 +334,7 @@ export interface components {
             choices?: string[] | null;
         };
         /** @enum {unknown} */
-        OperationParameterType: "Sysname" | "String" | "Int" | "Bool" | "Password" | "Choice" | "Database" | "Login";
+        OperationParameterType: "Sysname" | "String" | "Int" | "Bool" | "Password" | "Choice" | "Database" | "Login" | "User";
         OperationPreviewResult: {
             operationId: string;
             batches: string[];
@@ -362,6 +441,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditEntryResponse"][];
+                };
+            };
+        };
+    };
+    ListAuditSteps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditStepResponse"][];
                 };
             };
         };
@@ -479,6 +580,51 @@ export interface operations {
             };
         };
     };
+    ListLogins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginInfo"][];
+                };
+            };
+        };
+    };
+    ListDatabaseUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                database: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseUserInfo"][];
+                };
+            };
+        };
+    };
     ListOperations: {
         parameters: {
             query: {
@@ -498,13 +644,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OperationSummary"][];
                 };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };
@@ -532,22 +671,6 @@ export interface operations {
                     "application/json": components["schemas"]["OperationPreviewResult"];
                 };
             };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": string;
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
         };
     };
     ExecuteOperation: {
@@ -573,22 +696,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OperationExecuteResult"];
                 };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": string;
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

@@ -1,0 +1,190 @@
+# operations/provisioning.yaml — create logins/users and grant access (§2 "Provisioning").
+#
+# T-SQL cannot take @parameters in DDL (CREATE LOGIN ... PASSWORD = @p is a syntax error), so
+# these templates build the statement as dynamic SQL and run it with EXEC. Values still travel
+# as bound parameters; QUOTENAME(...) escapes them when they are placed into the statement:
+#   QUOTENAME(@name)          -> [name]      (identifiers; NULL if longer than 128 chars)
+#   QUOTENAME(@password, '''') -> 'secret'    (string literals; NULL if longer than 128 chars)
+# Choice parameters are validated against their declared choices by TemplateRenderer, so they
+# can be concatenated directly.
+#
+# Known limit: the password is part of the dynamic statement text on the server, so it can show
+# up in a server-side trace of that statement. It never reaches the audit log (the log stores
+# the template with @placeholders, not the values).
+
+operations:
+  - id: provisioning.create_sql_login
+    name: "Create SQL login"
+    category: provisioning
+    scope: server
+    engines: [sqlserver]
+    destructive: false
+    params:
+      - name: login_name
+        type: string
+        required: true
+      - name: password
+        type: password
+        required: true
+      - name: default_database
+        type: database
+        required: false
+        default: ""
+      - name: check_policy
+        type: bool
+        required: false
+        default: "true"
+    sql: |
+      IF LEN(@password) > 128 THROW 50000, N'Passwords longer than 128 characters are not supported.', 1;
+      DECLARE @sql nvarchar(max) = N'CREATE LOGIN ' + QUOTENAME(@login_name)
+        + N' WITH PASSWORD = ' + QUOTENAME(@password, '''')
+        + N', CHECK_POLICY = ' + CASE WHEN @check_policy = 1 THEN N'ON' ELSE N'OFF' END
+        + CASE WHEN @default_database <> N'' THEN N', DEFAULT_DATABASE = ' + QUOTENAME(@default_database) ELSE N'' END;
+      EXEC (@sql);
+      SELECT name AS login_name, type_desc, is_disabled, default_database_name, create_date
+      FROM sys.server_principals
+      WHERE name = @login_name;
+
+  - id: provisioning.create_windows_login
+    name: "Create Windows/AD login"
+    category: provisioning
+    scope: server
+    engines: [sqlserver]
+    destructive: false
+    params:
+      - name: login_name
+        type: string
+        required: true
+      - name: default_database
+        type: database
+        required: false
+        default: ""
+    sql: |
+      DECLARE @sql nvarchar(max) = N'CREATE LOGIN ' + QUOTENAME(@login_name) + N' FROM WINDOWS'
+        + CASE WHEN @default_database <> N'' THEN N' WITH DEFAULT_DATABASE = ' + QUOTENAME(@default_database) ELSE N'' END;
+      EXEC (@sql);
+      SELECT name AS login_name, type_desc, is_disabled, default_database_name, create_date
+      FROM sys.server_principals
+      WHERE name = @login_name;
+
+  - id: provisioning.create_user
+    name: "Create user for a login (selected database)"
+    category: provisioning
+    scope: database
+    engines: [sqlserver]
+    destructive: false
+    params:
+      - name: login_name
+        type: login
+        required: true
+      - name: user_name
+        type: string
+        required: false
+        default: ""
+      - name: default_schema
+        type: string
+        required: false
+        default: "dbo"
+    sql: |
+      DECLARE @u sysname = COALESCE(NULLIF(@user_name, N''), @login_name);
+      DECLARE @sql nvarchar(max) = N'CREATE USER ' + QUOTENAME(@u)
+        + N' FOR LOGIN ' + QUOTENAME(@login_name)
+        + N' WITH DEFAULT_SCHEMA = ' + QUOTENAME(@default_schema);
+      EXEC (@sql);
+      SELECT name AS user_name, type_desc, default_schema_name, create_date
+      FROM sys.database_principals
+      WHERE name = @u;
+
+  # The big one from Users-admin-commands.sql: for every online user database, create the user
+  # (or re-map it if it already exists) and add it to the chosen roles. One AuditStep per database.
+  - id: provisioning.user_all_databases
+    name: "Create/remap user in all online databases + roles"
+    category: provisioning
+    scope: all_databases
+    engines: [sqlserver]
+    destructive: false
+    params:
+      - name: login_name
+        type: login
+        required: true
+      - name: user_name
+        type: string
+        required: false
+        default: ""
+      - name: add_datareader
+        type: bool
+        required: false
+        default: "true"
+      - name: add_datawriter
+        type: bool
+        required: false
+        default: "false"
+      - name: grant_execute
+        type: bool
+        required: false
+        default: "false"
+    sql: |
+      DECLARE @u sysname = COALESCE(NULLIF(@user_name, N''), @login_name);
+      DECLARE @sql nvarchar(max);
+
+      IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @login_name)
+        THROW 50000, N'Login does not exist on this server.', 1;
+
+      -- Existing user: re-map it to the login (fixes orphans). Missing user: create it.
+      IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = @u AND type IN ('S', 'U', 'G'))
+        SET @sql = N'ALTER USER ' + QUOTENAME(@u) + N' WITH LOGIN = ' + QUOTENAME(@login_name);
+      ELSE
+        SET @sql = N'CREATE USER ' + QUOTENAME(@u) + N' FOR LOGIN ' + QUOTENAME(@login_name);
+      EXEC (@sql);
+
+      IF @add_datareader = 1
+      BEGIN
+        SET @sql = N'ALTER ROLE db_datareader ADD MEMBER ' + QUOTENAME(@u);
+        EXEC (@sql);
+      END;
+      IF @add_datawriter = 1
+      BEGIN
+        SET @sql = N'ALTER ROLE db_datawriter ADD MEMBER ' + QUOTENAME(@u);
+        EXEC (@sql);
+      END;
+      IF @grant_execute = 1
+      BEGIN
+        SET @sql = N'GRANT EXECUTE TO ' + QUOTENAME(@u);
+        EXEC (@sql);
+      END;
+
+      SELECT @u AS user_name,
+             IS_ROLEMEMBER(N'db_datareader', @u) AS is_datareader,
+             IS_ROLEMEMBER(N'db_datawriter', @u) AS is_datawriter;
+
+  - id: provisioning.grant_bundle
+    name: "Grant permission bundle (selected database)"
+    category: provisioning
+    scope: database
+    engines: [sqlserver]
+    destructive: false
+    params:
+      - name: user_name
+        type: user
+        required: true
+      - name: bundle
+        type: choice
+        required: true
+        choices: [read_only, read_write, execute, developer]
+    sql: |
+      -- read_only: db_datareader | read_write: + db_datawriter | execute: GRANT EXECUTE
+      -- developer: VIEW DEFINITION + EXECUTE + CREATE PROCEDURE + ALTER ON SCHEMA::dbo
+      DECLARE @q nvarchar(300) = QUOTENAME(@user_name);
+      DECLARE @sql nvarchar(max) = CASE @bundle
+        WHEN N'read_only'  THEN N'ALTER ROLE db_datareader ADD MEMBER ' + @q
+        WHEN N'read_write' THEN N'ALTER ROLE db_datareader ADD MEMBER ' + @q + N'; ALTER ROLE db_datawriter ADD MEMBER ' + @q
+        WHEN N'execute'    THEN N'GRANT EXECUTE TO ' + @q
+        WHEN N'developer'  THEN N'GRANT VIEW DEFINITION, EXECUTE, CREATE PROCEDURE TO ' + @q
+                                + N'; GRANT ALTER ON SCHEMA::dbo TO ' + @q
+      END;
+      EXEC (@sql);
+      SELECT dp.permission_name, dp.state_desc, dp.class_desc
+      FROM sys.database_permissions dp
+      JOIN sys.database_principals u ON u.principal_id = dp.grantee_principal_id
+      WHERE u.name = @user_name
+      ORDER BY dp.permission_name;

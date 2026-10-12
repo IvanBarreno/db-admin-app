@@ -11,6 +11,12 @@ public sealed class EfAuditStore(AuditDbContext db) : IAuditStore
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<IReadOnlyList<AuditStep>> GetStepsAsync(long auditEntryId, CancellationToken ct) =>
+        await db.Set<AuditStep>().AsNoTracking()
+            .Where(s => s.AuditEntryId == auditEntryId)
+            .OrderBy(s => s.StepNo)
+            .ToListAsync(ct);
+
     public async Task<IReadOnlyList<AuditEntry>> QueryAsync(AuditQuery query, CancellationToken ct)
     {
         var entries = db.AuditLog.AsNoTracking().AsQueryable();

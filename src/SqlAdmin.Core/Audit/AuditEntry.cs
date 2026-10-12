@@ -11,4 +11,7 @@ public sealed class AuditEntry
     public required string Sql { get; init; }
     public required string Status { get; init; } // "Success" | "Failed"
     public string? Detail { get; init; } // error message, or null on success
+
+    /// <summary>Per-database / per-action log. Saved together with the entry; not loaded by queries.</summary>
+    public List<AuditStep> Steps { get; init; } = [];
 }

@@ -34,7 +34,8 @@ export class ApiError extends Error {
   readonly problem: ProblemDetails | undefined
 
   constructor(status: number, problem: ProblemDetails | undefined) {
-    super(problem?.title ?? `HTTP ${status}`)
+    // "Invalid parameters: Parameter 'login_name' is required." — the detail is what tells the DBA what to fix.
+    super(problem?.detail ? `${problem.title ?? `HTTP ${status}`}: ${problem.detail}` : (problem?.title ?? `HTTP ${status}`))
     this.name = 'ApiError'
     this.status = status
     this.problem = problem

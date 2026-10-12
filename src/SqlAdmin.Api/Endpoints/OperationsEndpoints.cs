@@ -18,14 +18,14 @@ public static class OperationsEndpoints
 
         // GET /api/operations?server={name}
         // Filtered to the server's engine, so the UI never offers an operation the server can't run.
-        group.MapGet("/", Results<Ok<List<OperationSummary>>, NotFound> (
+        group.MapGet("/", Results<Ok<List<OperationSummary>>, ProblemHttpResult> (
                 string server,
                 IOperationRegistry registry,
                 IServerCatalog catalog,
                 IEngineRegistry engines) =>
             {
                 var serverDef = catalog.Find(server);
-                if (serverDef is null) return TypedResults.NotFound();
+                if (serverDef is null) return UnknownServer(server);
 
                 var engineId = engines.Get(serverDef.Engine).Id;
                 var list = registry.ForEngine(engineId).Select(OperationSummary.From).ToList();
@@ -35,7 +35,7 @@ public static class OperationsEndpoints
             .WithSummary("Operations available for a server, filtered by its engine");
 
         // POST /api/operations/{id}/preview
-        group.MapPost("/{id}/preview", Results<Ok<OperationPreviewResult>, NotFound, BadRequest<string>> (
+        group.MapPost("/{id}/preview", Results<Ok<OperationPreviewResult>, ProblemHttpResult> (
                 string id,
                 OperationRequest request,
                 IOperationRegistry registry,
@@ -43,55 +43,61 @@ public static class OperationsEndpoints
                 IEngineRegistry engines) =>
             {
                 var operation = registry.Find(id);
-                if (operation is null) return TypedResults.NotFound();
+                if (operation is null) return UnknownOperation(id);
 
                 var serverDef = catalog.Find(request.ServerName);
-                if (serverDef is null) return TypedResults.NotFound();
+                if (serverDef is null) return UnknownServer(request.ServerName);
 
-                try
-                {
-                    var dialect = engines.Get(serverDef.Engine).Dialect;
-                    var plan = OperationExecutor.Plan(operation, request.Params, dialect);
-                    return TypedResults.Ok(new OperationPreviewResult(plan.OperationId, plan.Batches));
-                }
-                catch (TemplateRenderException ex)
-                {
-                    return TypedResults.BadRequest(ex.Message);
-                }
+                // A TemplateRenderException (missing/invalid parameter) becomes a 400 ProblemDetails
+                // in DomainExceptionHandler, so no try/catch is needed here.
+                var plan = OperationExecutor.Plan(operation, request.Params, engines.Get(serverDef.Engine).Dialect);
+                return TypedResults.Ok(new OperationPreviewResult(plan.OperationId, plan.Batches));
             })
             .WithName("PreviewOperation")
             .WithSummary("Render the operation's template; nothing executes");
 
         // POST /api/operations/{id}/execute
-        group.MapPost("/{id}/execute", async Task<Results<Ok<OperationExecuteResult>, NotFound, BadRequest<string>>> (
+        group.MapPost("/{id}/execute", async Task<Results<Ok<OperationExecuteResult>, ProblemHttpResult>> (
                 string id,
                 OperationRequest request,
                 IOperationRegistry registry,
                 IServerConnectionFactory connections,
+                IServerCatalog catalog,
+                IEngineRegistry engines,
                 IAuditStore auditStore,
                 CancellationToken ct) =>
             {
                 var operation = registry.Find(id);
-                if (operation is null) return TypedResults.NotFound();
+                if (operation is null) return UnknownOperation(id);
+
+                var serverDef = catalog.Find(request.ServerName);
+                if (serverDef is null) return UnknownServer(request.ServerName);
 
                 var stopwatch = Stopwatch.StartNew();
-                await using var conn = await connections.OpenAsync(request.ServerName, request.Database, ct);
 
-                var messages = new List<string>();
-                using var subscription = conn.Engine.SubscribeToMessages(conn.Connection, messages);
+                // Render first: bad parameters fail fast (400 via DomainExceptionHandler) without
+                // opening a connection or writing an audit row.
+                var plan = OperationExecutor.Plan(operation, request.Params, engines.Get(serverDef.Engine).Dialect);
 
-                OperationPlan plan;
                 ScriptResult scriptResult;
-                try
+                IReadOnlyList<ExecutionStepDto>? steps = null;
+                if (operation.Scope == OperationScope.AllDatabases)
                 {
-                    plan = OperationExecutor.Plan(operation, request.Params, conn.Engine.Dialect);
+                    // The executor opens its own connections (one per database).
+                    var all = await AllDatabasesExecutor.ExecuteAsync(
+                        operation, request.Params, request.ServerName, connections, ct);
+                    scriptResult = all.Combined;
+                    steps = all.Steps.Select(s => new ExecutionStepDto(s.Database, s.Status, s.RowCount, s.Message)).ToList();
+                }
+                else
+                {
+                    await using var conn = await connections.OpenAsync(request.ServerName, request.Database, ct);
+                    var messages = new List<string>();
+                    using var subscription = conn.Engine.SubscribeToMessages(conn.Connection, messages);
+
                     scriptResult = await OperationExecutor.ExecuteAsync(
                         operation, request.Params, conn.Connection, conn.Engine.Dialect,
                         conn.Server.CommandTimeoutSeconds, messages, ct);
-                }
-                catch (TemplateRenderException ex)
-                {
-                    return TypedResults.BadRequest(ex.Message);
                 }
 
                 var response = new OperationExecuteResult(
@@ -102,7 +108,8 @@ public static class OperationsEndpoints
                         .ToList(),
                     Messages: scriptResult.Messages,
                     FailedBatchIndex: scriptResult.FailedBatchIndex,
-                    Error: scriptResult.Error);
+                    Error: scriptResult.Error,
+                    Steps: steps);
 
                 await auditStore.RecordAsync(new AuditEntry
                 {
@@ -113,6 +120,16 @@ public static class OperationsEndpoints
                     Sql = $"[{operation.Id}]\n" + string.Join("\nGO\n", plan.Batches),
                     Status = response.Success ? "Success" : "Failed",
                     Detail = response.Error,
+                    Steps = (steps ?? []).Select((s, i) => new AuditStep
+                    {
+                        StepNo = i + 1,
+                        Database = s.Database,
+                        Action = operation.Id,
+                        Status = s.Status,
+                        RowsAffected = s.RowCount,
+                        Message = s.Message,
+                        ExecutedAtUtc = DateTimeOffset.UtcNow,
+                    }).ToList(),
                 }, ct);
 
                 return TypedResults.Ok(response);
@@ -122,4 +139,12 @@ public static class OperationsEndpoints
 
         return app;
     }
+
+    // 404s as RFC 7807 bodies with a detail the UI can show ("Operation 'x' does not exist"),
+    // instead of the empty body TypedResults.NotFound() would produce.
+    private static ProblemHttpResult UnknownOperation(string id) =>
+        TypedResults.Problem(title: "Operation not found", detail: $"Operation '{id}' does not exist.", statusCode: StatusCodes.Status404NotFound);
+
+    private static ProblemHttpResult UnknownServer(string name) =>
+        TypedResults.Problem(title: "Server not found", detail: $"Server '{name}' is not configured.", statusCode: StatusCodes.Status404NotFound);
 }

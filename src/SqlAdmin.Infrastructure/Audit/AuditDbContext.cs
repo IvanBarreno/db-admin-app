@@ -18,6 +18,16 @@ public sealed class AuditDbContext(DbContextOptions<AuditDbContext> options) : D
             entity.Property(e => e.Sql).IsRequired();
             entity.Property(e => e.Status).IsRequired();
             entity.HasIndex(e => e.ExecutedAtUtc);
+            entity.HasMany(e => e.Steps).WithOne().HasForeignKey(s => s.AuditEntryId);
+        });
+
+        modelBuilder.Entity<AuditStep>(entity =>
+        {
+            entity.ToTable("audit_log_steps");
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.Action).IsRequired();
+            entity.Property(s => s.Status).IsRequired();
+            entity.HasIndex(s => s.AuditEntryId);
         });
     }
 }

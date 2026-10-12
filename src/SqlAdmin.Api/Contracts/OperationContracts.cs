@@ -31,4 +31,8 @@ public sealed record OperationExecuteResult(
     IReadOnlyList<CustomSqlResultSet> ResultSets,
     IReadOnlyList<string> Messages,
     int? FailedBatchIndex,
-    string? Error);
+    string? Error,
+    IReadOnlyList<ExecutionStepDto>? Steps = null);
+
+/// <summary>One per-database outcome of an all_databases run (null Steps for server/database scope).</summary>
+public sealed record ExecutionStepDto(string Database, string Status, int RowCount, string? Message);

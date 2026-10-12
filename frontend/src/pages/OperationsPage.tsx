@@ -3,6 +3,7 @@ import { EnvBadge } from '../components/EnvBadge'
 import { ParamForm } from '../components/ParamForm'
 import { ProductionBanner } from '../components/ProductionBanner'
 import { ResultsGrid } from '../components/ResultsGrid'
+import { StepLog } from '../components/StepLog'
 import { useDatabases, useServers } from '../api/servers'
 import { useExecuteOperation, useOperations, usePreviewOperation } from '../api/operations'
 
@@ -118,7 +119,13 @@ export default function OperationsPage() {
 
       {operation && (
         <div className="space-y-3 rounded border border-slate-200 p-4">
-          <ParamForm params={operation.params} values={paramValues} onChange={setParamValues} />
+          <ParamForm
+            params={operation.params}
+            values={paramValues}
+            onChange={setParamValues}
+            serverName={serverName}
+            database={database}
+          />
 
           <div className="flex items-center gap-3">
             <button
@@ -148,6 +155,7 @@ export default function OperationsPage() {
             </pre>
           )}
 
+          {execute.data?.steps && <StepLog steps={execute.data.steps} />}
           {execute.data && <ResultsGrid result={execute.data} />}
         </div>
       )}
