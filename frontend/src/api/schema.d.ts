@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/{id}/steps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Steps (e.g. one per database) recorded for an audit entry */
+        get: operations["ListAuditSteps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ping": {
         parameters: {
             query?: never;
@@ -126,6 +143,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/servers/{name}/logins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Server logins, for pickers */
+        get: operations["ListLogins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/servers/{name}/databases/{database}/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Users of one database, for pickers */
+        get: operations["ListDatabaseUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Operations available for a server, filtered by its engine */
+        get: operations["ListOperations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operations/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Render the operation's template; nothing executes */
+        post: operations["PreviewOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operations/{id}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the operation against a server (and optional database) */
+        post: operations["ExecuteOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -141,6 +243,16 @@ export interface components {
             sql: string;
             status: string;
             detail: string | null;
+        };
+        AuditStepResponse: {
+            /** Format: int32 */
+            stepNo: number;
+            database: string | null;
+            action: string;
+            status: string;
+            /** Format: int32 */
+            rowsAffected: number | null;
+            message: string | null;
         };
         /** @enum {unknown} */
         AuthMode: "Sql" | "Windows" | "EntraId";
@@ -178,6 +290,10 @@ export interface components {
             owner: string | null;
             isOnline: boolean;
         };
+        DatabaseUserInfo: {
+            name: string;
+            type: string;
+        };
         EngineCapabilities: {
             supportsUseDatabase: boolean;
             supportsServerLogins: boolean;
@@ -185,6 +301,60 @@ export interface components {
             supportsAgentJobs: boolean;
             supportsContainedUsers: boolean;
             supportsBatchSeparator: boolean;
+        };
+        ExecutionStepDto: {
+            database: string;
+            status: string;
+            /** Format: int32 */
+            rowCount: number;
+            message: string | null;
+        };
+        LoginInfo: {
+            name: string;
+            type: string;
+            isDisabled: boolean;
+        };
+        OperationExecuteResult: {
+            success: boolean;
+            /** Format: int64 */
+            elapsedMs: number;
+            resultSets: components["schemas"]["CustomSqlResultSet"][];
+            messages: string[];
+            /** Format: int32 */
+            failedBatchIndex: number | null;
+            error: string | null;
+            /** @default null */
+            steps: components["schemas"]["ExecutionStepDto"][] | null;
+        };
+        OperationParameter: {
+            name: string;
+            type: components["schemas"]["OperationParameterType"];
+            required?: boolean;
+            default?: string | null;
+            choices?: string[] | null;
+        };
+        /** @enum {unknown} */
+        OperationParameterType: "Sysname" | "String" | "Int" | "Bool" | "Password" | "Choice" | "Database" | "Login" | "User";
+        OperationPreviewResult: {
+            operationId: string;
+            batches: string[];
+        };
+        OperationRequest: {
+            serverName: string;
+            database: string | null;
+            params: {
+                [key: string]: string;
+            };
+        };
+        /** @enum {unknown} */
+        OperationScope: "Server" | "Database" | "AllDatabases";
+        OperationSummary: {
+            id: string;
+            name: string;
+            category: string;
+            scope: components["schemas"]["OperationScope"];
+            destructive: boolean;
+            params: components["schemas"]["OperationParameter"][];
         };
         PingResponse: {
             status: string;
@@ -271,6 +441,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditEntryResponse"][];
+                };
+            };
+        };
+    };
+    ListAuditSteps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditStepResponse"][];
                 };
             };
         };
@@ -384,6 +576,125 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DatabaseInfo"][];
+                };
+            };
+        };
+    };
+    ListLogins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginInfo"][];
+                };
+            };
+        };
+    };
+    ListDatabaseUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                database: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseUserInfo"][];
+                };
+            };
+        };
+    };
+    ListOperations: {
+        parameters: {
+            query: {
+                server: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationSummary"][];
+                };
+            };
+        };
+    };
+    PreviewOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreviewResult"];
+                };
+            };
+        };
+    };
+    ExecuteOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationExecuteResult"];
                 };
             };
         };

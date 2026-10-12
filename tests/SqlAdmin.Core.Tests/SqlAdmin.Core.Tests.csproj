@@ -14,6 +14,8 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.2" />       <!-- code coverage -->
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" /> <!-- lets `dotnet test` discover tests -->
+    <!-- In-memory SQLite stands in for "a server with several databases" in AllDatabasesExecutor tests -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.20" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
@@ -25,6 +27,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SqlAdmin.Core\SqlAdmin.Core.csproj" />
+    <!-- Infrastructure holds EfAuditStore + the operation registry, which these tests cover -->
+    <ProjectReference Include="..\..\src\SqlAdmin.Infrastructure\SqlAdmin.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

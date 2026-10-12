@@ -54,6 +54,59 @@ namespace SqlAdmin.Infrastructure.Audit.Migrations
 
                     b.ToTable("audit_log", (string)null);
                 });
+
+            modelBuilder.Entity("SqlAdmin.Core.Audit.AuditStep", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("AuditEntryId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Database")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("ExecutedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Message")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("RowsAffected")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("StepNo")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AuditEntryId");
+
+                    b.ToTable("audit_log_steps", (string)null);
+                });
+
+            modelBuilder.Entity("SqlAdmin.Core.Audit.AuditStep", b =>
+                {
+                    b.HasOne("SqlAdmin.Core.Audit.AuditEntry", null)
+                        .WithMany("Steps")
+                        .HasForeignKey("AuditEntryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("SqlAdmin.Core.Audit.AuditEntry", b =>
+                {
+                    b.Navigation("Steps");
+                });
 #pragma warning restore 612, 618
         }
     }

@@ -5,9 +5,11 @@ using Microsoft.Extensions.Options;
 using SqlAdmin.Core.Audit;
 using SqlAdmin.Core.Config;
 using SqlAdmin.Core.Engines;
+using SqlAdmin.Core.Operations;
 using SqlAdmin.Infrastructure.Audit;
 using SqlAdmin.Infrastructure.Config;
 using SqlAdmin.Infrastructure.Engines;
+using SqlAdmin.Infrastructure.Operations;
 
 namespace SqlAdmin.Infrastructure;
 
@@ -33,6 +35,10 @@ public static class DependencyInjection
         services.AddSingleton<ISecretResolver, ConfigurationSecretResolver>();
         services.AddSingleton<IEngineRegistry, EngineRegistry>();
         services.AddSingleton<IServerConnectionFactory, ServerConnectionFactory>();
+
+        // --- Operation catalog: YAML files under operations/, loaded once at startup ---
+        var operationsDirectory = configuration["Operations:Directory"] ?? "operations";
+        services.AddSingleton<IOperationRegistry>(_ => new OperationRegistry(operationsDirectory));
 
         // --- Audit log: SQLite next to the exe, one file, append-only ---
         var auditDbPath = configuration["AuditDb:Path"] ?? "audit.db";

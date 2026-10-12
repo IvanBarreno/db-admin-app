@@ -31,6 +31,15 @@ public static class AuditEndpoints
             .WithName("ListAuditEntries")
             .WithSummary("Audit log entries, newest first, optionally filtered by user/server/status");
 
+        // GET /api/audit/{id}/steps — per-database log of one run, for the StepLog component
+        app.MapGet("/api/audit/{id:long}/steps", async (long id, IAuditStore auditStore, CancellationToken ct) =>
+            {
+                var steps = await auditStore.GetStepsAsync(id, ct);
+                return TypedResults.Ok(steps.Select(AuditStepResponse.From).ToList());
+            })
+            .WithName("ListAuditSteps")
+            .WithSummary("Steps (e.g. one per database) recorded for an audit entry");
+
         return app;
     }
 }

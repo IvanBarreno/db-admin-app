@@ -105,6 +105,7 @@ if (app.Environment.IsDevelopment())
 app.MapPingEndpoints();
 app.MapServersEndpoints();
 app.MapCustomSqlEndpoints();
+app.MapOperationsEndpoints();
 app.MapAuditEndpoints();
 
 // ---------------------------------------------------------------------------
