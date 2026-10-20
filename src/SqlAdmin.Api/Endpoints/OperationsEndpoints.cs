@@ -101,35 +101,13 @@ public static class OperationsEndpoints
                 // opening a connection or writing an audit row.
                 var plan = OperationExecutor.Plan(operation, values, engines.Get(serverDef.Engine).Dialect);
 
-                ScriptResult scriptResult;
-                IReadOnlyList<ExecutionStepDto>? steps = null;
-                if (operation.Scope == OperationScope.AllDatabases)
-                {
-                    // The executor opens its own connections (one per database).
-                    var all = await AllDatabasesExecutor.ExecuteAsync(
-                        operation, values, request.ServerName, connections, ct);
-                    scriptResult = all.Combined;
-                    steps = all.Steps.Select(s => new ExecutionStepDto(s.Database, s.Status, s.RowCount, s.Message)).ToList();
-                }
-                else
-                {
-                    await using var conn = await connections.OpenAsync(request.ServerName, request.Database, ct);
-                    var messages = new List<string>();
-                    using var subscription = conn.Engine.SubscribeToMessages(conn.Connection, messages);
-
-                    scriptResult = await OperationExecutor.ExecuteAsync(
-                        operation, values, conn.Connection, conn.Engine.Dialect,
-                        conn.Server.CommandTimeoutSeconds, messages, ct);
-                }
-
-                // Rollback reference: keep the report as a file next to the exe (snapshots/ is git-ignored).
-                string? snapshotPath = null;
-                if (operation.SaveSnapshot && !scriptResult.Failed)
-                {
-                    snapshotPath = await SnapshotWriter.WriteAsync(
-                        Path.Combine(env.ContentRootPath, "snapshots"), request.ServerName, operation,
-                        values, scriptResult.ResultSets, DateTimeOffset.UtcNow, ct);
-                }
+                var run = await OperationRunner.RunAsync(
+                    operation, values, request.ServerName, request.Database,
+                    connections, Path.Combine(env.ContentRootPath, "snapshots"), ct);
+                var scriptResult = run.Script;
+                var steps = run.DatabaseSteps?
+                    .Select(s => new ExecutionStepDto(s.Database, s.Status, s.RowCount, s.Message)).ToList();
+                var snapshotPath = run.SnapshotPath;
 
                 var response = new OperationExecuteResult(
                     Success: !scriptResult.Failed,

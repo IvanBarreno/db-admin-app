@@ -3,6 +3,7 @@ import { usePing } from './api/ping'
 import ServersPage from './pages/ServersPage'
 import CustomSqlPage from './pages/CustomSqlPage'
 import OperationsPage from './pages/OperationsPage'
+import OffboardingPage from './pages/OffboardingPage'
 import AuditLogPage from './pages/AuditLogPage'
 
 /**
@@ -19,6 +20,7 @@ export default function App() {
             <nav className="flex gap-4 text-sm">
               <NavItem to="/">Servers</NavItem>
               <NavItem to="/operations">Operations</NavItem>
+              <NavItem to="/offboarding">Offboarding</NavItem>
               <NavItem to="/sql">Custom SQL</NavItem>
               <NavItem to="/audit">Audit log</NavItem>
             </nav>
@@ -31,6 +33,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<ServersPage />} />
           <Route path="/operations" element={<OperationsPage />} />
+          <Route path="/offboarding" element={<OffboardingPage />} />
           <Route path="/sql" element={<CustomSqlPage />} />
           <Route path="/audit" element={<AuditLogPage />} />
           <Route path="*" element={<p className="text-slate-500">Page not found.</p>} />

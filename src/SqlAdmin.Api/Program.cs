@@ -106,6 +106,7 @@ app.MapPingEndpoints();
 app.MapServersEndpoints();
 app.MapCustomSqlEndpoints();
 app.MapOperationsEndpoints();
+app.MapWorkflowEndpoints();
 app.MapAuditEndpoints();
 
 // ---------------------------------------------------------------------------

@@ -135,7 +135,7 @@ public sealed class OperationRegistryTests : IDisposable
 
     // ---- the real catalog --------------------------------------------------------------
 
-    private static string ShippedOperationsDir()
+    internal static string ShippedOperationsDir()
     {
         // Walk up from the test binary to the repo root, then into the API's operations folder.
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)

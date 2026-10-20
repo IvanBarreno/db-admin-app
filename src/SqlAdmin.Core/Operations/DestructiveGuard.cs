@@ -28,15 +28,27 @@ public sealed class DestructiveGuard
 
     public string IssueToken(
         OperationDefinition operation, string serverName, string? database,
+        IReadOnlyDictionary<string, string?> values) =>
+        IssueToken(operation.Id, serverName, database, values);
+
+    /// <summary>Same, for anything with a stable id — a workflow binds its token to the selected steps through <paramref name="values"/>.</summary>
+    public string IssueToken(
+        string operationId, string serverName, string? database,
         IReadOnlyDictionary<string, string?> values)
     {
         var expires = time.GetUtcNow().Add(Lifetime).ToUnixTimeSeconds();
-        return $"{expires}.{Sign(operation.Id, serverName, database, values, expires)}";
+        return $"{expires}.{Sign(operationId, serverName, database, values, expires)}";
     }
 
     /// <exception cref="ConfirmationRequiredException">Token missing/expired/for another request, or the server name wasn't typed on Production.</exception>
     public void Validate(
         OperationDefinition operation, ServerDefinition server, string? database,
+        IReadOnlyDictionary<string, string?> values, string? confirmToken, string? typedServerName) =>
+        Validate(operation.Id, server, database, values, confirmToken, typedServerName);
+
+    /// <exception cref="ConfirmationRequiredException">See the operation overload.</exception>
+    public void Validate(
+        string operationId, ServerDefinition server, string? database,
         IReadOnlyDictionary<string, string?> values, string? confirmToken, string? typedServerName)
     {
         if (string.IsNullOrWhiteSpace(confirmToken))
@@ -49,7 +61,7 @@ public sealed class DestructiveGuard
         if (time.GetUtcNow().ToUnixTimeSeconds() > expires)
             throw new ConfirmationRequiredException("The confirmation expired. Preview the operation again.");
 
-        var expected = Sign(operation.Id, server.Name, database, values, expires);
+        var expected = Sign(operationId, server.Name, database, values, expires);
         // Constant-time compare: don't leak how many leading characters matched.
         if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(parts[1])))
             throw new ConfirmationRequiredException("The confirmation does not match this request. Preview the operation again.");
