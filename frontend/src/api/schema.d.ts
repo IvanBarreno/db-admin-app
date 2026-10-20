@@ -330,6 +330,8 @@ export interface components {
             generatedPasswords: {
                 [key: string]: string;
             } | null;
+            /** @default null */
+            snapshotPath: string | null;
         };
         OperationParameter: {
             name: string;

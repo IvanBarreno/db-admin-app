@@ -71,6 +71,7 @@ public static class YamlOperationLoader
             Scope = scope,
             Engines = dto.Engines,
             Destructive = dto.Destructive,
+            SaveSnapshot = dto.SaveSnapshot,
             DestructiveWhen = destructiveWhen,
             Sql = dto.Sql,
             Params = dto.Params.Select(p => MapParameter(p, file)).ToList(),

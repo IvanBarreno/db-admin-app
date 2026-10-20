@@ -14,6 +14,9 @@ public sealed class AzureSqlEngine : SqlClientEngineBase
     public override string Id => EngineId;
     public override string DisplayName => "Azure SQL Database";
 
+    // No SUSER_SNAME(sid) on Azure SQL: owner is simply unknown in the database picker.
+    protected override string DatabaseOwnerExpression => "CAST(NULL AS nvarchar(128))";
+
     public override EngineCapabilities Capabilities { get; } = new(
         SupportsUseDatabase: false,
         SupportsServerLogins: false,   // possible in master, but not the recommended model — revisit if needed

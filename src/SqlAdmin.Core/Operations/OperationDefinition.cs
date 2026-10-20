@@ -16,6 +16,9 @@ public sealed record OperationDefinition
     public required IReadOnlyList<string> Engines { get; init; }
     public bool Destructive { get; init; }
 
+    /// <summary>True: after a successful run the result sets are saved to <c>snapshots/</c> (see <see cref="SnapshotWriter"/>).</summary>
+    public bool SaveSnapshot { get; init; }
+
     /// <summary>
     /// For operations that are only destructive in some modes (e.g. role ADD vs DROP): the operation
     /// needs a confirm token when this parameter holds one of the listed values. Ignored when

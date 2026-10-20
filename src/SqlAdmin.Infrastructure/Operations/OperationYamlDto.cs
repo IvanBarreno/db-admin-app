@@ -20,6 +20,7 @@ public sealed class OperationYamlDto
     public string Scope { get; set; } = "";
     public List<string> Engines { get; set; } = [];
     public bool Destructive { get; set; }
+    public bool SaveSnapshot { get; set; }
     public DestructiveWhenYamlDto? DestructiveWhen { get; set; }
     public List<OperationParameterYamlDto> Params { get; set; } = [];
     public string Sql { get; set; } = "";

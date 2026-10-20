@@ -211,6 +211,11 @@ export default function OperationsPage() {
           )}
 
           {execute.data?.generatedPasswords && <GeneratedPasswords passwords={execute.data.generatedPasswords} />}
+          {execute.data?.snapshotPath && (
+            <p className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+              Snapshot saved: <code className="break-all">{execute.data.snapshotPath}</code>
+            </p>
+          )}
           {execute.data?.steps && <StepLog steps={execute.data.steps} />}
           {execute.data && <ResultsGrid result={execute.data} />}
         </div>
