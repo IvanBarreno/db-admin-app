@@ -23,9 +23,11 @@ operations:
       - name: login_name
         type: string
         required: true
+      # Blank = the server generates a strong password and shows it once after the run.
       - name: password
         type: password
-        required: true
+        required: false
+        generate: true
       - name: default_database
         type: database
         required: false

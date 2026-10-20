@@ -19,10 +19,23 @@ public sealed record OperationSummary(
 public sealed record OperationRequest(
     string ServerName,
     string? Database,
-    Dictionary<string, string?> Params);
+    Dictionary<string, string?> Params,
+    // Token from /preview; required when the operation is destructive for these values.
+    string? ConfirmToken = null,
+    // Production servers only: the server name, typed by the DBA.
+    string? ConfirmServerName = null);
 
-/// <summary>Result of /preview: the exact SQL that would run, nothing executed.</summary>
-public sealed record OperationPreviewResult(string OperationId, IReadOnlyList<string> Batches);
+/// <summary>
+/// Result of /preview: the exact SQL that would run, nothing executed. When the operation is
+/// destructive for these values, <paramref name="ConfirmToken"/> must be sent back to /execute
+/// (and <paramref name="RequiresServerName"/> says the DBA must also type the server name).
+/// </summary>
+public sealed record OperationPreviewResult(
+    string OperationId,
+    IReadOnlyList<string> Batches,
+    bool Destructive = false,
+    string? ConfirmToken = null,
+    bool RequiresServerName = false);
 
 /// <summary>Result of /execute — same shape as the custom-SQL result, so the frontend reuses ResultsGrid.</summary>
 public sealed record OperationExecuteResult(
@@ -32,7 +45,9 @@ public sealed record OperationExecuteResult(
     IReadOnlyList<string> Messages,
     int? FailedBatchIndex,
     string? Error,
-    IReadOnlyList<ExecutionStepDto>? Steps = null);
+    IReadOnlyList<ExecutionStepDto>? Steps = null,
+    // Passwords the server generated (parameter name → value). Shown once, never stored or logged.
+    IReadOnlyDictionary<string, string>? GeneratedPasswords = null);
 
 /// <summary>One per-database outcome of an all_databases run (null Steps for server/database scope).</summary>
 public sealed record ExecutionStepDto(string Database, string Status, int RowCount, string? Message);

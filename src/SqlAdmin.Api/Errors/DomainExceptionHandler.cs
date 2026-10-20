@@ -24,7 +24,8 @@ public sealed class DomainExceptionHandler(IProblemDetailsService problemDetails
             ServerNotFoundException => (StatusCodes.Status404NotFound, "Server not found"),
             MissingSecretException  => (StatusCodes.Status400BadRequest, "Missing credentials"),
             TemplateRenderException => (StatusCodes.Status400BadRequest, "Invalid parameters"),
-            UnknownEngineException  => (StatusCodes.Status500InternalServerError, "Engine not available"),
+            ConfirmationRequiredException => (StatusCodes.Status428PreconditionRequired, "Confirmation required"),
+            UnknownEngineException => (StatusCodes.Status500InternalServerError, "Engine not available"),
             // DbException is the ADO.NET base class of SqlException, NpgsqlException, etc. —
             // handling the base keeps this project free of driver-specific references.
             DbException             => (StatusCodes.Status502BadGateway, "Database error"),

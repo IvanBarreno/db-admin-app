@@ -20,6 +20,7 @@ public sealed class OperationYamlDto
     public string Scope { get; set; } = "";
     public List<string> Engines { get; set; } = [];
     public bool Destructive { get; set; }
+    public DestructiveWhenYamlDto? DestructiveWhen { get; set; }
     public List<OperationParameterYamlDto> Params { get; set; } = [];
     public string Sql { get; set; } = "";
 }
@@ -31,4 +32,12 @@ public sealed class OperationParameterYamlDto
     public bool Required { get; set; } = true;
     public string? Default { get; set; }
     public List<string>? Choices { get; set; }
+    public bool Generate { get; set; }
+}
+
+/// <summary><c>destructive_when: { param: action, values: [DROP] }</c></summary>
+public sealed class DestructiveWhenYamlDto
+{
+    public string Param { get; set; } = "";
+    public List<string> Values { get; set; } = [];
 }

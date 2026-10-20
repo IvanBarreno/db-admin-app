@@ -54,6 +54,15 @@ public static class YamlOperationLoader
                 $"operation '{dto.Id}': 'scope' must be one of server, database, all_databases — got '{dto.Scope}'.");
         }
 
+        DestructiveCondition? destructiveWhen = null;
+        if (dto.DestructiveWhen is { } dw)
+        {
+            if (dw.Values.Count == 0 || !dto.Params.Any(p => p.Name == dw.Param))
+                throw new OperationYamlException(file,
+                    $"operation '{dto.Id}': 'destructive_when' needs a 'param' that exists and a non-empty 'values' list.");
+            destructiveWhen = new DestructiveCondition(dw.Param, dw.Values);
+        }
+
         return new OperationDefinition
         {
             Id = dto.Id,
@@ -62,6 +71,7 @@ public static class YamlOperationLoader
             Scope = scope,
             Engines = dto.Engines,
             Destructive = dto.Destructive,
+            DestructiveWhen = destructiveWhen,
             Sql = dto.Sql,
             Params = dto.Params.Select(p => MapParameter(p, file)).ToList(),
         };
@@ -78,8 +88,12 @@ public static class YamlOperationLoader
                 $"parameter '{p.Name}': 'type' must be one of sysname, string, int, bool, password, choice, database, login, user — got '{p.Type}'.");
         }
 
+        if (p.Generate && type != OperationParameterType.Password)
+            throw new OperationYamlException(file, $"parameter '{p.Name}': 'generate' only applies to type password.");
+
         return new OperationParameter
         {
+            Generate = p.Generate,
             Name = p.Name,
             Type = type,
             Required = p.Required,

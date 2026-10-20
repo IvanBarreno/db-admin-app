@@ -25,6 +25,45 @@ public static class OperationExecutor
         return new OperationPlan(operation.Id, batches);
     }
 
+    /// <summary>
+    /// Fills blank <c>generate: true</c> password parameters with a fresh random password. Returns
+    /// the completed values plus the generated ones (name → password) so the caller can show them
+    /// to the DBA once. Called at execute time only — preview never needs the real value.
+    /// </summary>
+    public static (Dictionary<string, string?> Values, Dictionary<string, string> Generated) ApplyGeneratedSecrets(
+        OperationDefinition operation, IReadOnlyDictionary<string, string?> values)
+    {
+        var completed = new Dictionary<string, string?>(values);
+        var generated = new Dictionary<string, string>();
+        foreach (var p in operation.Params.Where(p => p.Generate && p.Type == OperationParameterType.Password))
+        {
+            if (!string.IsNullOrWhiteSpace(completed.GetValueOrDefault(p.Name))) continue;
+            var password = SecretGenerator.GeneratePassword();
+            completed[p.Name] = password;
+            generated[p.Name] = password;
+        }
+        return (completed, generated);
+    }
+
+    /// <summary>
+    /// The request's parameter values as JSON for the audit log, with every
+    /// <see cref="OperationParameterType.Password"/> value replaced by <c>***</c>. Blank values are omitted.
+    /// </summary>
+    public static string RedactedParametersJson(
+        OperationDefinition operation, IReadOnlyDictionary<string, string?> values)
+    {
+        var passwords = operation.Params
+            .Where(p => p.Type == OperationParameterType.Password)
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var redacted = values
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Value))
+            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .ToDictionary(kv => kv.Key, kv => passwords.Contains(kv.Key) ? "***" : kv.Value);
+        return System.Text.Json.JsonSerializer.Serialize(redacted);
+    }
+
     public static async Task<ScriptResult> ExecuteAsync(
         OperationDefinition operation,
         IReadOnlyDictionary<string, string?> values,

@@ -84,7 +84,16 @@ function ParamInput({
       )
 
     case 'Password':
-      return <input type="password" value={value} onChange={(e) => onChange(e.target.value)} className={className} />
+      return (
+        <input
+          type="password"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={param.generate ? 'blank = generate' : undefined}
+          autoComplete="new-password"
+          className={className}
+        />
+      )
 
     case 'Int':
       return <input type="number" value={value} onChange={(e) => onChange(e.target.value)} className={className} />

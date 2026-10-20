@@ -23,6 +23,11 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
         </td>
         <td className="max-w-md truncate py-2 pr-4 font-mono text-xs" title={entry.sql}>
           {entry.sql}
+          {entry.parametersJson && (
+            <div className="truncate text-slate-500" title={entry.parametersJson}>
+              {entry.parametersJson}
+            </div>
+          )}
         </td>
         <td className="py-2">
           <button type="button" onClick={() => setOpen(!open)} className="text-xs text-slate-600 underline">
