@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { EnvBadge } from '../components/EnvBadge'
-import { ProductionBanner } from '../components/ProductionBanner'
 import { ResultsGrid } from '../components/ResultsGrid'
+import { TargetBar } from '../components/TargetBar'
+import { targetLabel } from '../components/target'
 import { useDatabases, useServers } from '../api/servers'
 import { useRunCustomSql } from '../api/customSql'
 
@@ -26,8 +27,7 @@ export default function CustomSqlPage() {
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Custom SQL</h2>
 
-      {server?.environment === 'Production' && <ProductionBanner serverName={server.name} />}
-
+      <TargetBar server={server} where={database || server?.defaultDatabase || '(login default database)'} summary="Free-form SQL, unrestricted" />
       {servers.isPending && <p className="text-slate-500">Loading servers…</p>}
       {servers.isError && <p className="text-red-700">Could not load servers: {servers.error.message}</p>}
 
@@ -89,7 +89,7 @@ export default function CustomSqlPage() {
           disabled={!serverName || sql.trim() === '' || run.isPending}
           className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
         >
-          {run.isPending ? 'Running…' : 'Execute'}
+          {run.isPending ? 'Running…' : targetLabel('Execute', server, database || null)}
         </button>
         {run.isError && <span className="text-sm text-red-700">{run.error.message}</span>}
         {run.data && (

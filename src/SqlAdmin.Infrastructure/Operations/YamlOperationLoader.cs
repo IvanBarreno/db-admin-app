@@ -57,10 +57,11 @@ public static class YamlOperationLoader
         DestructiveCondition? destructiveWhen = null;
         if (dto.DestructiveWhen is { } dw)
         {
-            if (dw.Values.Count == 0 || !dto.Params.Any(p => p.Name == dw.Param))
+            var target = dto.Params.FirstOrDefault(p => p.Name == dw.Param);
+            if (target is null || (dw.NotEmpty ? !target.Multi : dw.Values.Count == 0))
                 throw new OperationYamlException(file,
-                    $"operation '{dto.Id}': 'destructive_when' needs a 'param' that exists and a non-empty 'values' list.");
-            destructiveWhen = new DestructiveCondition(dw.Param, dw.Values);
+                    $"operation '{dto.Id}': 'destructive_when' needs a 'param' that exists and either a non-empty 'values' list or 'not_empty: true' on a multi parameter.");
+            destructiveWhen = new DestructiveCondition(dw.Param, dw.Values, dw.NotEmpty);
         }
 
         return new OperationDefinition
@@ -75,7 +76,17 @@ public static class YamlOperationLoader
             DestructiveWhen = destructiveWhen,
             Sql = dto.Sql,
             Params = dto.Params.Select(p => MapParameter(p, file)).ToList(),
+            Checks = dto.Checks.Select(c => MapCheck(c, dto.Id, file)).ToList(),
         };
+    }
+
+    private static OperationCheck MapCheck(OperationCheckYamlDto c, string operationId, string file)
+    {
+        if (string.IsNullOrWhiteSpace(c.Id) || string.IsNullOrWhiteSpace(c.Message) || string.IsNullOrWhiteSpace(c.Sql))
+            throw new OperationYamlException(file, $"operation '{operationId}': every check needs 'id', 'message' and 'sql'.");
+        if (!Enum.TryParse<CheckSeverity>(c.Severity, ignoreCase: true, out var severity))
+            throw new OperationYamlException(file, $"operation '{operationId}': check '{c.Id}' severity must be error or warning — got '{c.Severity}'.");
+        return new OperationCheck(c.Id, severity, c.Message, c.Sql);
     }
 
     private static OperationParameter MapParameter(OperationParameterYamlDto p, string file)
@@ -92,8 +103,41 @@ public static class YamlOperationLoader
         if (p.Generate && type != OperationParameterType.Password)
             throw new OperationYamlException(file, $"parameter '{p.Name}': 'generate' only applies to type password.");
 
+        var hasSource = p.Source is not null || type is OperationParameterType.Login or OperationParameterType.User or OperationParameterType.Database;
+        if (p.MustExist && !hasSource)
+            throw new OperationYamlException(file, $"parameter '{p.Name}': 'must_exist' needs a 'source' (or a login/user/database type).");
+        if (p.DependsOn is { Count: > 0 } && !hasSource)
+            throw new OperationYamlException(file, $"parameter '{p.Name}': 'depends_on' needs a 'source'.");
+
+        if (p.Multi && !hasSource)
+            throw new OperationYamlException(file, $"parameter '{p.Name}': 'multi' needs a 'source' (the lookup that lists the items).");
+        if (p.DefaultAll && !p.Multi)
+            throw new OperationYamlException(file, $"parameter '{p.Name}': 'default_all' only applies to 'multi' parameters.");
+        if ((p.ChecklistGroup is not null) != (p.ChecklistAction is not null))
+            throw new OperationYamlException(file, $"parameter '{p.Name}': 'checklist_group' and 'checklist_action' go together.");
+        if (p.ChecklistAction is not null and not ("add" or "drop"))
+            throw new OperationYamlException(file, $"parameter '{p.Name}': 'checklist_action' must be add or drop — got '{p.ChecklistAction}'.");
+        if (p.ChecklistGroup is not null && !p.Multi)
+            throw new OperationYamlException(file, $"parameter '{p.Name}': a checklist group needs 'multi: true'.");
+
+        ParameterSuggestion? suggest = null;
+        if (p.Suggest is { } s)
+        {
+            if (s.Lookup.Length == 0 || s.Column.Length == 0 || s.Map.Count == 0)
+                throw new OperationYamlException(file, $"parameter '{p.Name}': 'suggest' needs 'lookup', 'column' and a non-empty 'map'.");
+            suggest = new ParameterSuggestion(s.Lookup, s.Column, s.DependsOn, s.Map);
+        }
+
         return new OperationParameter
         {
+            Suggest = suggest,
+            Multi = p.Multi,
+            DefaultAll = p.DefaultAll,
+            ChecklistGroup = p.ChecklistGroup,
+            ChecklistAction = p.ChecklistAction,
+            Source = p.Source,
+            DependsOn = p.DependsOn,
+            MustExist = p.MustExist,
             Generate = p.Generate,
             Name = p.Name,
             Type = type,

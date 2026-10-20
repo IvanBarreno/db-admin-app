@@ -1,0 +1,136 @@
+# Database-level lookups: the connection is opened against the database the caller selected.
+
+lookups:
+  - id: users
+    name: "Database users"
+    scope: database
+    engines: [sqlserver]
+    sql: |
+      -- principal_id > 4 skips dbo, guest, INFORMATION_SCHEMA and sys.
+      -- is_orphan: a SQL user mapped to a login SID that no longer exists on the server.
+      SELECT dp.name AS value,
+             dp.type_desc AS type,
+             dp.default_schema_name,
+             SUSER_SNAME(dp.sid) AS login_name,
+             CAST(CASE WHEN dp.type = 'S'
+                        AND dp.authentication_type_desc = 'INSTANCE'
+                        AND NOT EXISTS (SELECT 1 FROM sys.server_principals sp WHERE sp.sid = dp.sid)
+                       THEN 1 ELSE 0 END AS bit) AS is_orphan
+      FROM sys.database_principals dp
+      WHERE dp.type IN ('S', 'U', 'G', 'E', 'X')
+        AND dp.principal_id > 4
+      ORDER BY dp.name;
+
+  - id: users
+    name: "Database users"
+    scope: database
+    engines: [azuresql]
+    sql: |
+      -- No server catalog inside an Azure SQL database: no login mapping or orphan flag.
+      SELECT dp.name AS value,
+             dp.type_desc AS type,
+             dp.default_schema_name,
+             dp.authentication_type_desc AS authentication
+      FROM sys.database_principals dp
+      WHERE dp.type IN ('S', 'U', 'G', 'E', 'X')
+        AND dp.principal_id > 4
+      ORDER BY dp.name;
+
+  - id: database_roles
+    name: "Database roles"
+    scope: database
+    engines: [sqlserver, azuresql]
+    args: [user_name]
+    sql: |
+      -- Fixed and custom roles of this database. is_member is filled when a user_name is given.
+      -- "public" is left out; is_high_risk flags roles that grant control of the database.
+      SELECT r.name AS value,
+             r.is_fixed_role,
+             CASE WHEN r.name IN ('db_owner', 'db_securityadmin', 'db_accessadmin', 'db_ddladmin') THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS is_high_risk,
+             (SELECT COUNT(*) FROM sys.database_role_members x WHERE x.role_principal_id = r.principal_id) AS member_count,
+             CASE WHEN @user_name IS NULL THEN NULL
+                  WHEN EXISTS (SELECT 1
+                               FROM sys.database_role_members m
+                               JOIN sys.database_principals u ON u.principal_id = m.member_principal_id
+                               WHERE m.role_principal_id = r.principal_id AND u.name = @user_name)
+                  THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS is_member
+      FROM sys.database_principals r
+      WHERE r.type = 'R' AND r.name <> 'public'
+      ORDER BY r.is_fixed_role DESC, r.name;
+
+  - id: schemas
+    name: "Schemas"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT s.name AS value,
+             p.name AS owner
+      FROM sys.schemas s
+      JOIN sys.database_principals p ON p.principal_id = s.principal_id
+      ORDER BY s.name;
+
+  - id: orphaned_users
+    name: "Orphaned users"
+    scope: database
+    engines: [sqlserver]
+    sql: |
+      -- SQL users whose login SID is gone. suggested_login = a login with the same name, if any.
+      SELECT dp.name AS value,
+             CONVERT(varchar(100), dp.sid, 1) AS sid,
+             (SELECT TOP 1 sp.name FROM sys.server_principals sp WHERE sp.name = dp.name) AS suggested_login
+      FROM sys.database_principals dp
+      WHERE dp.type = 'S'
+        AND dp.authentication_type_desc = 'INSTANCE'
+        AND dp.principal_id > 4
+        AND dp.sid IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM sys.server_principals sp WHERE sp.sid = dp.sid)
+      ORDER BY dp.name;
+
+  # Objects of the selected database, for the Explorer. value = schema.name; user objects only.
+  - id: tables
+    name: "Tables"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT s.name + N'.' + o.name AS value, s.name AS [schema], o.name AS name,
+             COALESCE(USER_NAME(o.principal_id), USER_NAME(s.principal_id)) AS owner,
+             o.create_date, o.modify_date
+      FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id
+      WHERE o.type = 'U' AND o.is_ms_shipped = 0
+      ORDER BY s.name, o.name;
+
+  - id: views
+    name: "Views"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT s.name + N'.' + o.name AS value, s.name AS [schema], o.name AS name,
+             COALESCE(USER_NAME(o.principal_id), USER_NAME(s.principal_id)) AS owner,
+             o.create_date, o.modify_date
+      FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id
+      WHERE o.type = 'V' AND o.is_ms_shipped = 0
+      ORDER BY s.name, o.name;
+
+  - id: procedures
+    name: "Stored procedures"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT s.name + N'.' + o.name AS value, s.name AS [schema], o.name AS name,
+             COALESCE(USER_NAME(o.principal_id), USER_NAME(s.principal_id)) AS owner,
+             o.create_date, o.modify_date
+      FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id
+      WHERE o.type = 'P' AND o.is_ms_shipped = 0
+      ORDER BY s.name, o.name;
+
+  - id: functions
+    name: "Functions"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT s.name + N'.' + o.name AS value, s.name AS [schema], o.name AS name, o.type_desc AS type,
+             COALESCE(USER_NAME(o.principal_id), USER_NAME(s.principal_id)) AS owner,
+             o.create_date, o.modify_date
+      FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id
+      WHERE o.type IN ('FN', 'IF', 'TF') AND o.is_ms_shipped = 0
+      ORDER BY s.name, o.name;

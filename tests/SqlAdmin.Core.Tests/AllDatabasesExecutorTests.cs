@@ -156,6 +156,52 @@ public sealed class AllDatabasesExecutorTests : IDisposable
         Assert.Equal([2, 0], result.Steps.Select(s => s.RowCount));
     }
 
+    private Task<AllDatabasesResult> RunLimitedTo(string? databasesJson)
+    {
+        var op = Op() with
+        {
+            Params =
+            [
+                .. Op().Params,
+                new OperationParameter { Name = "databases", Type = OperationParameterType.String, Multi = true, Required = false },
+            ],
+        };
+        var values = Values("bob");
+        if (databasesJson is not null) values["databases"] = databasesJson;
+        return AllDatabasesExecutor.ExecuteAsync(op, values, "SRV", _factory, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task A_databases_list_limits_the_run_to_those_databases()
+    {
+        AddDatabase("a", rows: [("r1", "bob")]);
+        AddDatabase("b", rows: [("r2", "bob")]);
+        AddDatabase("c", rows: [("r3", "bob")]);
+
+        var result = await RunLimitedTo("""["c","A"]""");
+
+        Assert.Equal(["a", "c"], result.Steps.Select(s => s.Database).Order()); // case-insensitive match
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("[]")]
+    public async Task No_databases_list_means_every_online_database(string? list)
+    {
+        AddDatabase("a", rows: []);
+        AddDatabase("b", rows: []);
+
+        Assert.Equal(2, (await RunLimitedTo(list)).Steps.Count);
+    }
+
+    [Fact]
+    public async Task The_none_sentinel_visits_no_database()
+    {
+        AddDatabase("a", rows: []);
+
+        Assert.Empty((await RunLimitedTo($"[\"{MultiValues.NoneSentinel}\"]")).Steps);
+    }
+
     [Fact]
     public async Task Provider_messages_are_prefixed_with_the_database_name()
     {
@@ -200,8 +246,6 @@ public sealed class AllDatabasesExecutorTests : IDisposable
         public Task<ServerInfo> TestAsync(DbConnection connection, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<DatabaseInfo>> ListDatabasesAsync(DbConnection connection, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<DatabaseInfo>>(Databases.ToList());
-        public Task<IReadOnlyList<LoginInfo>> ListLoginsAsync(DbConnection connection, CancellationToken ct) => throw new NotSupportedException();
-        public Task<IReadOnlyList<DatabaseUserInfo>> ListDatabaseUsersAsync(DbConnection connection, CancellationToken ct) => throw new NotSupportedException();
 
         // A real engine hooks SqlConnection.InfoMessage; the fake just emits one message up front.
         public IDisposable SubscribeToMessages(DbConnection connection, List<string> messages)

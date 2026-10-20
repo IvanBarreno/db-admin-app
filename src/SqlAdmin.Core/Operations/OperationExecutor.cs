@@ -71,9 +71,10 @@ public static class OperationExecutor
         ISqlDialect dialect,
         int commandTimeoutSeconds,
         List<string> messages,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool dryRun = false)
     {
-        var rendered = TemplateRenderer.Render(operation, values, dialect);
+        var rendered = TemplateRenderer.Render(operation, values, dialect, dryRun);
         var batches = BatchSplitter.Split(rendered.Sql, dialect.BatchSeparator);
 
         return await SqlScriptExecutor.ExecuteAsync(

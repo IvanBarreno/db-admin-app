@@ -31,6 +31,9 @@ public sealed record WorkflowPlan(WorkflowDefinition Workflow, IReadOnlyList<Pla
     }
 }
 
+/// <summary>A preflight result tagged with the workflow step whose operation declared it.</summary>
+public sealed record WorkflowCheckResult(string StepKey, string StepTitle, CheckResult Result);
+
 /// <summary>Outcome of one step. Status: <c>OK</c>, <c>FAILED</c> or <c>NOT_RUN</c> (an earlier step failed).</summary>
 public sealed record StepOutcome(
     PlannedStep Planned,
@@ -72,7 +75,11 @@ public static class WorkflowRunner
         var planned = new List<PlannedStep>();
         foreach (var step in chosen)
         {
-            if (step.NeedsNewOwner && string.IsNullOrWhiteSpace(values.GetValueOrDefault("new_owner")))
+            // The step's own owner (ParamMap, e.g. jobs_new_owner) counts as much as the shared new_owner.
+            var ownerSource = step.ParamMap?.GetValueOrDefault("new_owner");
+            if (step.NeedsNewOwner
+                && string.IsNullOrWhiteSpace(values.GetValueOrDefault("new_owner"))
+                && string.IsNullOrWhiteSpace(ownerSource is null ? null : values.GetValueOrDefault(ownerSource)))
                 throw new TemplateRenderException($"Step '{step.Title}' needs 'new_owner'.");
 
             var operation = registry.Find(step.OperationId)
@@ -87,6 +94,11 @@ public static class WorkflowRunner
             {
                 if (values.TryGetValue(p.Name, out var v)) stepValues[p.Name] = v;
             }
+            foreach (var (opParam, workflowName) in step.ParamMap ?? new Dictionary<string, string>())
+            {
+                if (values.GetValueOrDefault(workflowName) is { Length: > 0 } mapped && !string.IsNullOrWhiteSpace(mapped))
+                    stepValues[opParam] = mapped;
+            }
             foreach (var (name, fixedValue) in step.FixedValues ?? new Dictionary<string, string>())
                 stepValues[name] = fixedValue;
 
@@ -95,6 +107,41 @@ public static class WorkflowRunner
         }
 
         return new WorkflowPlan(workflow, planned);
+    }
+
+    /// <summary>
+    /// Runs the preflight checks of every planned step against the server (nothing is changed). Steps are
+    /// checked against the CURRENT state, so checks must only look at things the earlier steps don't alter
+    /// (does the login/new owner exist, is the new owner enabled, can msdb be reached...).
+    /// </summary>
+    public static async Task<IReadOnlyList<WorkflowCheckResult>> PreflightAsync(
+        WorkflowPlan plan, string serverName, IServerConnectionFactory connections, CancellationToken ct)
+    {
+        var all = new List<WorkflowCheckResult>();
+        foreach (var planned in plan.Steps)
+        {
+            var results = await PreflightRunner.RunAsync(planned.Operation, planned.Values, serverName, null, connections, ct);
+            all.AddRange(results.Select(r => new WorkflowCheckResult(planned.Step.Key, planned.Step.Title, r)));
+        }
+
+        return all;
+    }
+
+    /// <summary>
+    /// Dry-runs every planned step (nothing is changed) and returns the exact statements per step key.
+    /// Like the checks, each step sees the CURRENT server state, i.e. as if it were the first step to run.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<string, DryRunResult>> DryRunAsync(
+        WorkflowPlan plan, string serverName, IServerConnectionFactory connections, CancellationToken ct)
+    {
+        var results = new Dictionary<string, DryRunResult>();
+        foreach (var planned in plan.Steps)
+        {
+            var result = await DryRunRunner.RunAsync(planned.Operation, planned.Values, serverName, null, connections, ct);
+            if (result is not null) results[planned.Step.Key] = result;
+        }
+
+        return results;
     }
 
     /// <summary>

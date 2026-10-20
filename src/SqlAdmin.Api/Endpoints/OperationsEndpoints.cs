@@ -5,6 +5,7 @@ using SqlAdmin.Core.Audit;
 using SqlAdmin.Core.Config;
 using SqlAdmin.Core.Engines;
 using SqlAdmin.Core.Execution;
+using SqlAdmin.Core.Lookups;
 using SqlAdmin.Core.Operations;
 
 namespace SqlAdmin.Api.Endpoints;
@@ -35,13 +36,16 @@ public static class OperationsEndpoints
             .WithSummary("Operations available for a server, filtered by its engine");
 
         // POST /api/operations/{id}/preview
-        group.MapPost("/{id}/preview", Results<Ok<OperationPreviewResult>, ProblemHttpResult> (
+        group.MapPost("/{id}/preview", async Task<Results<Ok<OperationPreviewResult>, ProblemHttpResult>> (
                 string id,
                 OperationRequest request,
                 IOperationRegistry registry,
                 IServerCatalog catalog,
                 IEngineRegistry engines,
-                DestructiveGuard guard) =>
+                ILookupRegistry lookups,
+                IServerConnectionFactory connections,
+                DestructiveGuard guard,
+                CancellationToken ct) =>
             {
                 var operation = registry.Find(id);
                 if (operation is null) return UnknownOperation(id);
@@ -49,17 +53,37 @@ public static class OperationsEndpoints
                 var serverDef = catalog.Find(request.ServerName);
                 if (serverDef is null) return UnknownServer(request.ServerName);
 
+                // List parameters become canonical (distinct, sorted) so the token binds to the selection itself.
+                request = request with { Params = MultiValues.Normalize(operation.Params, request.Params) };
+
                 // A TemplateRenderException (missing/invalid parameter) becomes a 400 ProblemDetails
                 // in DomainExceptionHandler, so no try/catch is needed here.
                 var plan = OperationExecutor.Plan(operation, request.Params, engines.Get(serverDef.Engine).Dialect);
 
-                // Destructive for these values: hand back the token that /execute will demand.
+                // must_exist parameters are checked against the server's own lists (400 if not found).
+                await MustExistValidator.ValidateAsync(
+                    operation, request.Params, request.ServerName, request.Database, lookups, connections, ct);
+
+                // Preflight: read-only validations against the real server state.
+                var checks = (await PreflightRunner.RunAsync(
+                    operation, request.Params, request.ServerName, request.Database, connections, ct)).ToList();
+
+                // Dry run: ask the script itself for the statements it would execute. If the script fails
+                // here (a guard THROW, a missing object) the real run fails the same way, so it blocks.
+                var dryRun = await DryRunRunner.RunAsync(
+                    operation, request.Params, request.ServerName, request.Database, connections, ct);
+                if (dryRun?.Error is { } dryRunError)
+                    checks.Add(new CheckResult("dry_run", CheckSeverity.Error, false, dryRunError));
+
+                // Destructive for these values: hand back the token that /execute will demand — but never
+                // while a blocking check fails, so the UI cannot even offer "Confirm and execute".
                 var destructive = operation.RequiresConfirmation(request.Params);
-                var token = destructive
+                var token = destructive && !checks.Any(c => c.Blocking)
                     ? guard.IssueToken(operation, request.ServerName, request.Database, request.Params)
                     : null;
                 return TypedResults.Ok(new OperationPreviewResult(
-                    plan.OperationId, plan.Batches, destructive, token, destructive && serverDef.IsProduction));
+                    plan.OperationId, plan.Batches, destructive, token, destructive && serverDef.IsProduction, checks,
+                    dryRun?.Statements));
             })
             .WithName("PreviewOperation")
             .WithSummary("Render the operation's template; nothing executes");
@@ -70,6 +94,7 @@ public static class OperationsEndpoints
                 OperationRequest request,
                 IOperationRegistry registry,
                 IServerConnectionFactory connections,
+                ILookupRegistry lookups,
                 IServerCatalog catalog,
                 IEngineRegistry engines,
                 IAuditStore auditStore,
@@ -84,6 +109,7 @@ public static class OperationsEndpoints
                 if (serverDef is null) return UnknownServer(request.ServerName);
 
                 var stopwatch = Stopwatch.StartNew();
+                request = request with { Params = MultiValues.Normalize(operation.Params, request.Params) };
 
                 // Destructive for these values? Then the previewed token (and, on Production, the typed
                 // server name) must match this exact request. 428 via DomainExceptionHandler otherwise.
@@ -96,6 +122,12 @@ public static class OperationsEndpoints
 
                 // Blank "generate" password fields get a random password; it is returned once below.
                 var (values, generated) = OperationExecutor.ApplyGeneratedSecrets(operation, request.Params);
+
+                // Re-check right before running: the server may have changed since the preview.
+                await MustExistValidator.ValidateAsync(
+                    operation, request.Params, request.ServerName, request.Database, lookups, connections, ct);
+                PreflightRunner.ThrowIfBlocking(await PreflightRunner.RunAsync(
+                    operation, request.Params, request.ServerName, request.Database, connections, ct));
 
                 // Render first: bad parameters fail fast (400 via DomainExceptionHandler) without
                 // opening a connection or writing an audit row.
@@ -119,7 +151,9 @@ public static class OperationsEndpoints
                     FailedBatchIndex: scriptResult.FailedBatchIndex,
                     Error: scriptResult.Error,
                     Steps: steps,
-                    GeneratedPasswords: generated.Count > 0 ? generated : null,
+                    // Only hand back a generated password if the run succeeded; after a failure
+                    // (e.g. login already exists) it was never set, so showing it would mislead.
+                    GeneratedPasswords: generated.Count > 0 && !scriptResult.Failed ? generated : null,
                     SnapshotPath: snapshotPath);
 
                 await auditStore.RecordAsync(new AuditEntry

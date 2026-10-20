@@ -27,7 +27,8 @@ public static class OperationRunner
         string? database,
         IServerConnectionFactory connections,
         string snapshotDirectory,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool dryRun = false)
     {
         ScriptResult script;
         IReadOnlyList<DatabaseStep>? databaseSteps = null;
@@ -35,7 +36,7 @@ public static class OperationRunner
         if (operation.Scope == OperationScope.AllDatabases)
         {
             // The executor opens its own connections (one per database).
-            var all = await AllDatabasesExecutor.ExecuteAsync(operation, values, serverName, connections, ct);
+            var all = await AllDatabasesExecutor.ExecuteAsync(operation, values, serverName, connections, ct, dryRun);
             script = all.Combined;
             databaseSteps = all.Steps;
         }
@@ -47,12 +48,12 @@ public static class OperationRunner
 
             script = await OperationExecutor.ExecuteAsync(
                 operation, values, conn.Connection, conn.Engine.Dialect,
-                conn.Server.CommandTimeoutSeconds, messages, ct);
+                conn.Server.CommandTimeoutSeconds, messages, ct, dryRun);
         }
 
         // Rollback reference: keep the report as a file next to the exe (snapshots/ is git-ignored).
         string? snapshotPath = null;
-        if (operation.SaveSnapshot && !script.Failed)
+        if (operation.SaveSnapshot && !script.Failed && !dryRun)
         {
             snapshotPath = await SnapshotWriter.WriteAsync(
                 snapshotDirectory, serverName, operation, values, script.ResultSets, DateTimeOffset.UtcNow, ct);

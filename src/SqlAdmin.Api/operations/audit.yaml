@@ -178,6 +178,14 @@ operations:
       - name: user_name
         type: string
         required: true
+      # Optional: look only in these databases (ticked = all online ones; the executor reads this parameter by name).
+      - name: databases
+        type: string
+        source: databases
+        multi: true
+        default_all: true
+        required: false
+        must_exist: true
     sql: |
       SELECT r.name AS database_role, m.name AS user_name
       FROM sys.database_role_members drm
@@ -185,6 +193,34 @@ operations:
       JOIN sys.database_principals m ON m.principal_id = drm.member_principal_id
       WHERE m.name = @user_name
       ORDER BY r.name;
+
+  - id: audit.orphaned_users_all
+    name: "Orphaned users in all online databases"
+    category: audit
+    scope: all_databases
+    engines: [sqlserver]
+    destructive: false
+    params:
+      - name: databases
+        type: string
+        source: databases
+        multi: true
+        default_all: true
+        required: false
+        must_exist: true
+    sql: |
+      -- SQL users whose login SID is gone, per database. Fix them with "Fix several orphaned users" or
+      -- "Drop orphaned users" (select the database there).
+      SELECT u.name AS user_name,
+             (SELECT TOP 1 sp.name FROM sys.server_principals sp WHERE sp.name = u.name) AS suggested_login,
+             u.create_date
+      FROM sys.database_principals u
+      WHERE u.type = 'S'
+        AND u.authentication_type_desc = N'INSTANCE'
+        AND u.principal_id > 4
+        AND u.sid IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM sys.server_principals sp WHERE sp.sid = u.sid)
+      ORDER BY u.name;
 
   - id: audit.orphaned_users
     name: "Orphaned users (no matching login)"

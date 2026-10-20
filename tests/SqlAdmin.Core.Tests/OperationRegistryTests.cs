@@ -154,7 +154,11 @@ public sealed class OperationRegistryTests : IDisposable
         {
             foreach (var p in op.Params)
             {
-                var used = op.Sql.Contains($"@{p.Name}", StringComparison.Ordinal)
+                // The "databases" list of an all_databases operation is read by the executor, not by the SQL.
+                var consumedByExecutor = op.Scope == OperationScope.AllDatabases
+                                         && p.Name == AllDatabasesExecutor.SelectedDatabasesParameter && p.Multi;
+                var used = consumedByExecutor
+                           || op.Sql.Contains($"@{p.Name}", StringComparison.Ordinal)
                            || op.Sql.Contains($"{{{{ident:{p.Name}}}}}", StringComparison.Ordinal);
                 Assert.True(used, $"{op.Id}: parameter '{p.Name}' is never used in the SQL.");
 

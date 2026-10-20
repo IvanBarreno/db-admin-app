@@ -30,6 +30,7 @@
       servers.local.json is optional (each DBA creates their own) so we don't fail if missing.
     -->
     <None Update="operations\**\*.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="lookups\**\*.yaml" CopyToOutputDirectory="PreserveNewest" />
     <None Update="servers.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="servers.local.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('servers.local.json')" />
   </ItemGroup>

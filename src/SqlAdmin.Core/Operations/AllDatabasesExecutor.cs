@@ -26,12 +26,16 @@ public static class AllDatabasesExecutor
     /// <summary>Column prepended to every unioned result set so rows say which DB they came from.</summary>
     public const string DatabaseColumn = "database_name";
 
+    /// <summary>Name of the optional list parameter that limits an all_databases run to some databases.</summary>
+    public const string SelectedDatabasesParameter = "databases";
+
     public static async Task<AllDatabasesResult> ExecuteAsync(
         OperationDefinition operation,
         IReadOnlyDictionary<string, string?> values,
         string serverName,
         IServerConnectionFactory connections,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool dryRun = false)
     {
         // 1. Discover target databases on a server-level connection, then release it.
         IReadOnlyList<DatabaseInfo> databases;
@@ -43,7 +47,7 @@ public static class AllDatabasesExecutor
         }
 
         // 2. Render once: the SQL is identical for every database, only the connection changes.
-        var rendered = TemplateRenderer.Render(operation, values, dialect);
+        var rendered = TemplateRenderer.Render(operation, values, dialect, dryRun);
         var batches = BatchSplitter.Split(rendered.Sql, dialect.BatchSeparator);
 
         var steps = new List<DatabaseStep>();
@@ -51,7 +55,14 @@ public static class AllDatabasesExecutor
         // Union key = batch index + column names, so grids of the same shape merge into one.
         var merged = new Dictionary<string, (int BatchIndex, List<string> Columns, List<IReadOnlyList<object?>> Rows)>();
 
-        foreach (var db in databases.Where(d => d.IsOnline))
+        // An operation may declare a list parameter named "databases": only those are visited.
+        // Empty / absent = every online database (the original behaviour).
+        var selected = operation.Params.Any(p => p.Name == SelectedDatabasesParameter && p.Multi)
+            ? MultiValues.Parse(values.GetValueOrDefault(SelectedDatabasesParameter))
+            : [];
+
+        foreach (var db in databases.Where(d => d.IsOnline
+                     && (selected.Count == 0 || selected.Contains(d.Name, StringComparer.OrdinalIgnoreCase))))
         {
             ct.ThrowIfCancellationRequested();
             try

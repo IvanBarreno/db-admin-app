@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from 'react-router'
 import { usePing } from './api/ping'
 import ServersPage from './pages/ServersPage'
 import CustomSqlPage from './pages/CustomSqlPage'
+import ExplorerPage from './pages/ExplorerPage'
 import OperationsPage from './pages/OperationsPage'
 import OffboardingPage from './pages/OffboardingPage'
 import AuditLogPage from './pages/AuditLogPage'
@@ -19,6 +20,7 @@ export default function App() {
             <h1 className="text-lg font-semibold">SQL Admin Console</h1>
             <nav className="flex gap-4 text-sm">
               <NavItem to="/">Servers</NavItem>
+              <NavItem to="/explorer">Explorer</NavItem>
               <NavItem to="/operations">Operations</NavItem>
               <NavItem to="/offboarding">Offboarding</NavItem>
               <NavItem to="/sql">Custom SQL</NavItem>
@@ -32,6 +34,7 @@ export default function App() {
       <main className="mx-auto max-w-6xl p-6">
         <Routes>
           <Route path="/" element={<ServersPage />} />
+          <Route path="/explorer" element={<ExplorerPage />} />
           <Route path="/operations" element={<OperationsPage />} />
           <Route path="/offboarding" element={<OffboardingPage />} />
           <Route path="/sql" element={<CustomSqlPage />} />

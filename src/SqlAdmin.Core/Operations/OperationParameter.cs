@@ -36,4 +36,63 @@ public sealed record OperationParameter
     /// password (<see cref="SecretGenerator"/>), uses it, and returns it once in the execute response.
     /// </summary>
     public bool Generate { get; init; }
+
+    /// <summary>
+    /// Id of a lookup (<c>lookups/*.yaml</c>) that lists the valid values from the server. The UI
+    /// shows them as suggestions; with <see cref="MustExist"/> they become the only accepted values.
+    /// Null falls back to the implicit source of the type (see <see cref="EffectiveSource"/>).
+    /// </summary>
+    public string? Source { get; init; }
+
+    /// <summary>Names of OTHER parameters whose current values the lookup needs (bound to its args by the same name).</summary>
+    public IReadOnlyList<string>? DependsOn { get; init; }
+
+    /// <summary>True: the value must appear in the lookup — checked in the form and again on the server.</summary>
+    public bool MustExist { get; init; }
+
+    /// <summary>
+    /// A list of values from the <see cref="Source"/> lookup, ticked in a checklist. Travels as a JSON array of
+    /// strings in the same string slot as every other value, is bound as one JSON parameter (<c>OPENJSON(@name)</c>
+    /// in the script), and is normalised (distinct, sorted) so a confirm token binds to the SELECTION, not its order.
+    /// </summary>
+    public bool Multi { get; init; }
+
+    /// <summary>
+    /// Multi only. Pre-tick everything the lookup returns (the UI shows all ticked until the DBA unticks some).
+    /// An empty list then means "all", which is what a script that filters on the list expects.
+    /// </summary>
+    public bool DefaultAll { get; init; }
+
+    /// <summary>
+    /// Two multi parameters with the same group (one <c>add</c>, one <c>drop</c>) are shown as ONE checklist whose
+    /// ticks start from the lookup's <c>is_member</c> column; the form sends only the difference (what to add, what to drop).
+    /// </summary>
+    public string? ChecklistGroup { get; init; }
+
+    /// <summary><c>add</c> or <c>drop</c>: which side of the diff this parameter receives.</summary>
+    public string? ChecklistAction { get; init; }
+
+    /// <summary>Preselects a value (typically a Choice) from the current state of the server; see <see cref="ParameterSuggestion"/>.</summary>
+    public ParameterSuggestion? Suggest { get; init; }
+
+    /// <summary>The lookup that feeds this parameter: explicit <c>source:</c>, else implied by Login/User/Database.</summary>
+    public string? EffectiveSource => Source ?? Type switch
+    {
+        OperationParameterType.Login => "logins",
+        OperationParameterType.User => "users",
+        OperationParameterType.Database => "databases",
+        _ => null,
+    };
 }
+
+/// <summary>
+/// "Ask the server, then propose a value": the form runs <paramref name="Lookup"/> (with the values of
+/// <paramref name="DependsOn"/> as args), reads <paramref name="Column"/> of the first row, and maps its text
+/// through <paramref name="Map"/> to a value for the parameter — e.g. <c>is_disabled</c> "true" → ENABLE, so an
+/// already-disabled login is offered ENABLE and not DISABLE. It only fills a field the DBA has not touched.
+/// </summary>
+public sealed record ParameterSuggestion(
+    string Lookup,
+    string Column,
+    IReadOnlyList<string> DependsOn,
+    IReadOnlyDictionary<string, string> Map);

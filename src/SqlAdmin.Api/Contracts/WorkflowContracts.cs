@@ -45,14 +45,20 @@ public sealed record WorkflowPreviewResult(
     IReadOnlyList<WorkflowPlannedStep> Steps,
     bool Destructive,
     string? ConfirmToken,
-    bool RequiresServerName);
+    bool RequiresServerName,
+    // Preflight checks of every selected step; a blocking failure withholds the token.
+    IReadOnlyList<WorkflowCheckResult> Checks,
+    // Dry-run report: counts of what the run will touch (null when the workflow has none or it can't be read).
+    SqlAdmin.Core.Lookups.LookupResult? Impact);
 
 public sealed record WorkflowPlannedStep(
     string Key,
     string Title,
     string OperationId,
     bool Destructive,
-    IReadOnlyList<string> Batches);
+    IReadOnlyList<string> Batches,
+    // The exact statements this step will execute (null for steps without dry-run support, e.g. the snapshot).
+    IReadOnlyList<DryRunStatement>? Statements = null);
 
 /// <summary>Per-step outcome. Status: OK | FAILED | NOT_RUN.</summary>
 public sealed record WorkflowStepResult(

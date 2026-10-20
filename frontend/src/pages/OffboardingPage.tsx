@@ -1,9 +1,14 @@
 import { useState } from 'react'
 import { EnvBadge } from '../components/EnvBadge'
 import { ParamForm } from '../components/ParamForm'
-import { ProductionBanner } from '../components/ProductionBanner'
+import { PreflightPanel, type PanelCheck } from '../components/PreflightPanel'
+import { ConfirmRecap } from '../components/ConfirmRecap'
+import { TargetBar } from '../components/TargetBar'
+import { targetLabel } from '../components/target'
 import { ResultsGrid } from '../components/ResultsGrid'
+import { StatementList } from '../components/StatementList'
 import { StepLog } from '../components/StepLog'
+import type { LookupResult } from '../api/lookups'
 import { useServers } from '../api/servers'
 import {
   useExecuteWorkflow,
@@ -38,6 +43,16 @@ export default function OffboardingPage() {
   const selected = picked ?? defaultSelection(workflow)
   const pendingConfirm = preview.data?.destructive ? preview.data : null
   const confirmReady = !pendingConfirm?.requiresServerName || typedServerName === serverName
+  // Preflight checks of every selected step: one blocking failure stops the whole checklist, before the snapshot.
+  const checks: PanelCheck[] | undefined = preview.data?.checks.map((c) => ({ ...c.result, stepTitle: c.stepTitle }))
+  const blocked = checks?.some((c) => c.blocking) ?? false
+
+  // Target context (F4): who is being offboarded, from where, repeated in the bar, the button and the recap.
+  const leaver = paramValues['login_name']
+  const newOwner = paramValues['new_owner']
+  const summary = leaver
+    ? `Offboard [${leaver}] · ${selected.size} step${selected.size === 1 ? '' : 's'}${newOwner ? ` · new owner [${newOwner}]` : ''}`
+    : 'Offboard a login'
 
   function buildRequest() {
     return {
@@ -69,6 +84,7 @@ export default function OffboardingPage() {
     // Always preview first: it says whether the plan is destructive and hands back the token.
     const current = preview.data ?? (await preview.mutateAsync(buildRequest()).catch(() => null))
     if (!current) return // preview failed; its error is shown below
+    if (current.checks.some((c) => c.result.blocking)) return // blocked by a preflight check; shown below
     if (current.destructive && !(preview.data && confirmReady)) return // show the confirm panel first
     execute.mutate({
       ...buildRequest(),
@@ -81,7 +97,7 @@ export default function OffboardingPage() {
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Offboarding</h2>
 
-      {server?.environment === 'Production' && <ProductionBanner serverName={server.name} />}
+      <TargetBar server={server} where="server level + every online database" summary={summary} />
 
       {(servers.isPending || workflows.isPending) && <p className="text-slate-500">Loading…</p>}
       {servers.isError && <p className="text-red-700">Could not load servers: {servers.error.message}</p>}
@@ -149,18 +165,23 @@ export default function OffboardingPage() {
                 <button
                   type="button"
                   onClick={runExecute}
-                  disabled={execute.isPending || preview.isPending || !confirmReady}
+                  disabled={execute.isPending || preview.isPending || !confirmReady || blocked}
                   className={`rounded px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
                     pendingConfirm ? 'bg-red-700 hover:bg-red-600' : 'bg-slate-800 hover:bg-slate-700'
                   }`}
                 >
-                  {execute.isPending ? 'Running…' : pendingConfirm ? 'Confirm and run the checklist' : 'Run the checklist'}
+                  {execute.isPending
+                    ? 'Running…'
+                    : targetLabel(pendingConfirm ? 'Confirm and run the checklist' : 'Run the checklist', server, leaver ? `[${leaver}]` : null)}
                 </button>
                 {execute.isError && <span className="text-sm text-red-700">{execute.error.message}</span>}
                 {execute.data && <span className="text-sm text-slate-500">{execute.data.elapsedMs} ms</span>}
               </div>
 
               {preview.isError && <p className="text-sm text-red-700">{preview.error.message}</p>}
+
+              <PreflightPanel checks={checks} />
+              {preview.data?.impact && <ImpactReport impact={preview.data.impact} />}
 
               {preview.data && (
                 <div className="space-y-2">
@@ -170,19 +191,38 @@ export default function OffboardingPage() {
                         {i + 1}. {s.title}
                         {s.destructive && <span className="ml-2 text-xs text-red-700">⚠ destructive</span>}
                       </summary>
-                      <pre className="whitespace-pre-wrap border-t border-slate-100 bg-slate-50 p-3 text-xs text-slate-700">
-                        {s.batches.join('\nGO\n')}
-                      </pre>
+                      <div className="space-y-2 border-t border-slate-100 p-3">
+                        {/* Dry run: the exact statements. Steps without dry-run (the snapshot) show their query. */}
+                        {s.statements ? (
+                          <StatementList statements={s.statements} />
+                        ) : (
+                          <pre className="whitespace-pre-wrap bg-slate-50 p-3 text-xs text-slate-700">
+                            {s.batches.join('\nGO\n')}
+                          </pre>
+                        )}
+                      </div>
                     </details>
                   ))}
                 </div>
               )}
 
-              {pendingConfirm && (
+              {pendingConfirm && !blocked && (
                 <div className="space-y-2 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900">
                   <p className="font-medium">
-                    ⚠ This runs {pendingConfirm.steps.length} steps and changes the server. Review the SQL above, then confirm.
+                    ⚠ This runs {pendingConfirm.steps.length} steps and changes the server. Review the statements above, then confirm.
                   </p>
+                  {server && (
+                    <ConfirmRecap
+                      rows={[
+                        ['Server', `${server.name} (${server.environment})`],
+                        ['Login', leaver ? `[${leaver}]` : null],
+                        ['New owner', newOwner ? `[${newOwner}]` : null],
+                        ['Steps', pendingConfirm.steps.map((s) => s.title).join(' → ')],
+                        ['Statements', `${pendingConfirm.steps.reduce((n, s) => n + (s.statements?.length ?? 0), 0)} in total`],
+                        ['Will touch', touchedSummary(preview.data?.impact)],
+                      ]}
+                    />
+                  )}
                   {pendingConfirm.requiresServerName && (
                     <label className="block">
                       <span className="mb-1 block">
@@ -203,6 +243,44 @@ export default function OffboardingPage() {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+/** "1 databases owned, 2 server roles" — the non-zero lines of the impact report, for the confirm recap. */
+function touchedSummary(impact: LookupResult | null | undefined): string | null {
+  if (!impact || impact.warning) return null
+  const lines = impact.items
+    .map((i) => ({ label: i.label.replace(/ \(.*\)$/, '').toLowerCase(), count: Number((i.extra as Record<string, unknown>).count ?? 0) }))
+    .filter((i) => i.count > 0 && !i.label.startsWith('databases not online'))
+    .map((i) => `${i.count} ${i.label}`)
+  return lines.length > 0 ? lines.join(', ') : 'nothing owned or held by this login'
+}
+
+/** Dry-run report: how many sessions / jobs / databases / roles the run will touch, from the server. */
+function ImpactReport({ impact }: { impact: LookupResult }) {
+  if (impact.warning) {
+    return <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">⚠ {impact.warning}</p>
+  }
+
+  return (
+    <div className="rounded border border-slate-200 text-sm">
+      <p className="border-b border-slate-100 px-3 py-2 font-medium text-slate-700">What this run will touch</p>
+      <table className="w-full">
+        <tbody>
+          {impact.items.map((item) => {
+            const count = Number((item.extra as Record<string, unknown>).count ?? 0)
+            return (
+              <tr key={item.value} className="border-t border-slate-100 first:border-t-0">
+                <td className="px-3 py-1 text-slate-600">{item.label}</td>
+                <td className={`px-3 py-1 text-right tabular-nums ${count > 0 ? 'font-medium text-slate-900' : 'text-slate-400'}`}>
+                  {count}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }

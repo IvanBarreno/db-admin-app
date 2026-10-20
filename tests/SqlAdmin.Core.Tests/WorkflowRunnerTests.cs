@@ -33,6 +33,55 @@ public class WorkflowRunnerTests
     }
 
     [Fact]
+    public void Jobs_can_have_their_own_owner_and_the_databases_keep_the_shared_one()
+    {
+        var values = Values("heir");
+        values["jobs_new_owner"] = "jobowner";
+
+        var plan = Plan(["reassign_jobs", "reassign_databases"], values);
+
+        Assert.Equal("jobowner", plan.Steps.Single(s => s.Step.Key == "reassign_jobs").Values["new_owner"]);
+        Assert.Equal("heir", plan.Steps.Single(s => s.Step.Key == "reassign_databases").Values["new_owner"]);
+    }
+
+    [Fact]
+    public void Without_a_jobs_owner_the_shared_new_owner_applies_to_jobs_too()
+    {
+        var plan = Plan(["reassign_jobs"], Values("heir"));
+
+        Assert.Equal("heir", plan.Steps.Single(s => s.Step.Key == "reassign_jobs").Values["new_owner"]);
+    }
+
+    [Fact]
+    public void A_jobs_owner_alone_is_enough_for_the_jobs_step()
+    {
+        var values = Values(newOwner: null);
+        values["jobs_new_owner"] = "jobowner";
+
+        Assert.Equal("jobowner", Plan(["reassign_jobs"], values).Steps.Single(s => s.Step.Key == "reassign_jobs").Values["new_owner"]);
+        Assert.Throws<TemplateRenderException>(() => Plan(["reassign_databases"], values)); // databases still need new_owner
+    }
+
+    [Fact]
+    public void Selections_reach_only_the_steps_that_declare_them()
+    {
+        var values = Values();
+        values["sessions"] = """["55"]""";
+        values["jobs"] = """["jobA"]""";
+        values["owned_databases"] = """["db1"]""";
+        values["databases"] = """["db2"]""";
+
+        var plan = Plan(["kill_sessions", "reassign_jobs", "reassign_databases", "drop_users"], values);
+        string? Of(string step, string param) => plan.Steps.Single(s => s.Step.Key == step).Values.GetValueOrDefault(param);
+
+        Assert.Equal("""["55"]""", Of("kill_sessions", "sessions"));
+        Assert.Equal("""["jobA"]""", Of("reassign_jobs", "jobs"));
+        Assert.Equal("""["db1"]""", Of("reassign_databases", "owned_databases"));
+        Assert.Equal("""["db2"]""", Of("drop_users", "databases"));
+        Assert.Null(Of("kill_sessions", "jobs"));
+    }
+
+    [Fact]
     public void Snapshot_is_always_first_even_when_not_selected()
     {
         var plan = Plan(["drop_login"]);

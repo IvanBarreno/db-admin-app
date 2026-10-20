@@ -1,9 +1,11 @@
+using System.Data.Common;
 using System.Diagnostics;
 using Microsoft.AspNetCore.Http.HttpResults;
 using SqlAdmin.Api.Contracts;
 using SqlAdmin.Core.Audit;
 using SqlAdmin.Core.Config;
 using SqlAdmin.Core.Engines;
+using SqlAdmin.Core.Lookups;
 using SqlAdmin.Core.Operations;
 
 namespace SqlAdmin.Api.Endpoints;
@@ -21,13 +23,16 @@ public static class WorkflowEndpoints
             .WithSummary("Guided checklists and their steps");
 
         // POST /api/workflows/{id}/preview — SQL of every selected step; one token for the whole plan.
-        group.MapPost("/{id}/preview", Results<Ok<WorkflowPreviewResult>, ProblemHttpResult> (
+        group.MapPost("/{id}/preview", async Task<Results<Ok<WorkflowPreviewResult>, ProblemHttpResult>> (
                 string id,
                 WorkflowRequest request,
                 IOperationRegistry registry,
                 IServerCatalog catalog,
                 IEngineRegistry engines,
-                DestructiveGuard guard) =>
+                ILookupRegistry lookups,
+                IServerConnectionFactory connections,
+                DestructiveGuard guard,
+                CancellationToken ct) =>
             {
                 var workflow = Workflows.Find(id);
                 if (workflow is null) return UnknownWorkflow(id);
@@ -35,18 +40,43 @@ public static class WorkflowEndpoints
                 if (serverDef is null) return UnknownServer(request.ServerName);
 
                 var engine = engines.Get(serverDef.Engine);
+                request = request with { Params = MultiValues.Normalize(workflow.Params, request.Params) };
                 var plan = WorkflowRunner.Plan(workflow, registry, engine.Id, engine.Dialect, request.Params, request.Steps);
 
-                var token = plan.Destructive
+                // Everything a step needs must exist on the server (e.g. new_owner), then the YAML checks.
+                foreach (var step in plan.Steps)
+                {
+                    await MustExistValidator.ValidateAsync(
+                        step.Operation, step.Values, request.ServerName, null, lookups, connections, ct);
+                }
+
+                var checks = (await WorkflowRunner.PreflightAsync(plan, request.ServerName, connections, ct)).ToList();
+
+                // Dry run every step; a step whose script fails here would fail for real, so it blocks.
+                var dryRuns = await WorkflowRunner.DryRunAsync(plan, request.ServerName, connections, ct);
+                foreach (var step in plan.Steps)
+                {
+                    if (dryRuns.GetValueOrDefault(step.Step.Key)?.Error is { } error)
+                        checks.Add(new WorkflowCheckResult(step.Step.Key, step.Step.Title,
+                            new CheckResult("dry_run", CheckSeverity.Error, false, error)));
+                }
+
+                var impact = await RunImpactAsync(workflow, request, serverDef, lookups, connections, ct);
+
+                // No token while a blocking check fails: nothing destructive can start from this preview.
+                var token = plan.Destructive && !checks.Any(c => c.Result.Blocking)
                     ? guard.IssueToken(workflow.Id, request.ServerName, null, plan.TokenValues(request.Params))
                     : null;
                 return TypedResults.Ok(new WorkflowPreviewResult(
                     workflow.Id,
                     plan.Steps.Select(s => new WorkflowPlannedStep(
-                        s.Step.Key, s.Step.Title, s.Operation.Id, s.Destructive, s.Batches)).ToList(),
+                        s.Step.Key, s.Step.Title, s.Operation.Id, s.Destructive, s.Batches,
+                        dryRuns.GetValueOrDefault(s.Step.Key)?.Statements)).ToList(),
                     plan.Destructive,
                     token,
-                    plan.Destructive && serverDef.IsProduction));
+                    plan.Destructive && serverDef.IsProduction,
+                    checks,
+                    impact));
             })
             .WithName("PreviewWorkflow")
             .WithSummary("Render every selected step; nothing executes");
@@ -57,6 +87,7 @@ public static class WorkflowEndpoints
                 WorkflowRequest request,
                 IOperationRegistry registry,
                 IServerConnectionFactory connections,
+                ILookupRegistry lookups,
                 IServerCatalog catalog,
                 IEngineRegistry engines,
                 IAuditStore auditStore,
@@ -71,6 +102,7 @@ public static class WorkflowEndpoints
 
                 var stopwatch = Stopwatch.StartNew();
                 var engine = engines.Get(serverDef.Engine);
+                request = request with { Params = MultiValues.Normalize(workflow.Params, request.Params) };
                 var plan = WorkflowRunner.Plan(workflow, registry, engine.Id, engine.Dialect, request.Params, request.Steps);
 
                 // The token covers the workflow values AND the ticked steps; 428 via DomainExceptionHandler otherwise.
@@ -79,6 +111,17 @@ public static class WorkflowEndpoints
                     guard.Validate(workflow.Id, serverDef, null, plan.TokenValues(request.Params),
                         request.ConfirmToken, request.ConfirmServerName);
                 }
+
+                // Nothing runs, not even the snapshot, unless every check of every selected step passes.
+                foreach (var step in plan.Steps)
+                {
+                    await MustExistValidator.ValidateAsync(
+                        step.Operation, step.Values, request.ServerName, null, lookups, connections, ct);
+                }
+
+                var failed = (await WorkflowRunner.PreflightAsync(plan, request.ServerName, connections, ct))
+                    .Where(c => c.Result.Blocking).Select(c => c.Result).ToList();
+                if (failed.Count > 0) throw new PreflightFailedException(failed);
 
                 // One audit row per step that ran, written as soon as it finishes, so a later failure
                 // (or a closed browser tab) never loses the record of what already happened.
@@ -123,6 +166,27 @@ public static class WorkflowEndpoints
             .WithSummary("Run the selected steps in order against a server");
 
         return app;
+    }
+
+    /// <summary>The workflow's dry-run report (counts of what will be touched); null if it has none or cannot be read.</summary>
+    private static async Task<LookupResult?> RunImpactAsync(
+        WorkflowDefinition workflow, WorkflowRequest request, ServerDefinition server,
+        ILookupRegistry lookups, IServerConnectionFactory connections, CancellationToken ct)
+    {
+        if (workflow.ImpactLookup is null) return null;
+        var lookup = lookups.Find(workflow.ImpactLookup, server.Engine);
+        if (lookup is null) return null;
+
+        try
+        {
+            await using var conn = await connections.OpenAsync(request.ServerName, lookup.DatabaseToOpen(null), ct);
+            return await LookupRunner.RunAsync(
+                lookup, conn.Connection, conn.Engine.Dialect, request.Params, conn.Server.CommandTimeoutSeconds, ct);
+        }
+        catch (DbException ex)
+        {
+            return new LookupResult([], $"Could not build the impact report: {ex.Message}");
+        }
     }
 
     private static WorkflowStepResult ToDto(StepOutcome o) => new(

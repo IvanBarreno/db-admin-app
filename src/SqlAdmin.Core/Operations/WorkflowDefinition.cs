@@ -11,6 +11,10 @@ namespace SqlAdmin.Core.Operations;
 /// <param name="Required">Always runs and cannot be unticked (e.g. the snapshot).</param>
 /// <param name="NeedsNewOwner">Uses the workflow's <c>new_owner</c> value, so that value becomes mandatory when the step is selected.</param>
 /// <param name="FixedValues">Parameter values this step always uses (e.g. <c>action = DISABLE</c>).</param>
+/// <param name="ParamMap">
+/// Operation parameter ← workflow value with another name (e.g. <c>new_owner</c> ← <c>jobs_new_owner</c>), used when that
+/// workflow value is not blank; otherwise the same-named workflow value applies.
+/// </param>
 public sealed record WorkflowStep(
     string Key,
     string Title,
@@ -18,7 +22,8 @@ public sealed record WorkflowStep(
     bool Required = false,
     bool DefaultOn = true,
     bool NeedsNewOwner = false,
-    IReadOnlyDictionary<string, string>? FixedValues = null);
+    IReadOnlyDictionary<string, string>? FixedValues = null,
+    IReadOnlyDictionary<string, string>? ParamMap = null);
 
 /// <summary>
 /// A guided checklist: an ordered list of steps over registered operations, run in one go with
@@ -31,7 +36,9 @@ public sealed record WorkflowDefinition(
     string Description,
     IReadOnlyList<OperationParameter> Params,
     IReadOnlyList<WorkflowStep> Steps,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    // Lookup (lookups/*.yaml) that counts what the run will touch, shown in the preview as a dry-run report.
+    string? ImpactLookup = null);
 
 /// <summary>The workflows the app ships with.</summary>
 public static class Workflows
@@ -45,14 +52,38 @@ public static class Workflows
         "Removes a person's access in the safe order. Pick which steps to run; a failed step stops the rest, so you can fix the cause and run the remaining ones again.",
         [
             new OperationParameter { Name = "login_name", Type = OperationParameterType.Login },
-            new OperationParameter { Name = "new_owner", Type = OperationParameterType.Login, Required = false },
+            new OperationParameter { Name = "new_owner", Type = OperationParameterType.Login, Required = false, MustExist = true },
+            // Optional: a different owner for the SQL Agent jobs than for the databases.
+            new OperationParameter { Name = "jobs_new_owner", Type = OperationParameterType.Login, Required = false, MustExist = true },
+            // Which things each step touches. Ticked by default; unticking narrows the step (see MultiValues.NoneSentinel).
+            new OperationParameter
+            {
+                Name = "sessions", Type = OperationParameterType.String, Required = false, Source = "sessions",
+                DependsOn = ["login_name"], Multi = true, DefaultAll = true,
+            },
+            new OperationParameter
+            {
+                Name = "jobs", Type = OperationParameterType.String, Required = false, Source = "jobs",
+                DependsOn = ["login_name"], Multi = true, DefaultAll = true, MustExist = true,
+            },
+            new OperationParameter
+            {
+                Name = "owned_databases", Type = OperationParameterType.String, Required = false, Source = "databases_owned",
+                DependsOn = ["login_name"], Multi = true, DefaultAll = true, MustExist = true,
+            },
+            new OperationParameter
+            {
+                Name = "databases", Type = OperationParameterType.String, Required = false, Source = "databases",
+                Multi = true, DefaultAll = true, MustExist = true,
+            },
         ],
         [
             new("snapshot", "Snapshot the login's access (saved to a file)", "offboarding.snapshot", Required: true),
             new("disable", "Disable the login", "changes.set_login_enabled",
                 FixedValues: new Dictionary<string, string> { ["action"] = "DISABLE" }),
             new("kill_sessions", "Kill active sessions", "offboarding.kill_sessions"),
-            new("reassign_jobs", "Reassign SQL Agent jobs to the new owner", "offboarding.reassign_jobs", NeedsNewOwner: true),
+            new("reassign_jobs", "Reassign SQL Agent jobs to the new owner", "offboarding.reassign_jobs", NeedsNewOwner: true,
+                ParamMap: new Dictionary<string, string> { ["new_owner"] = "jobs_new_owner" }),
             new("reassign_databases", "Reassign owned databases to the new owner", "offboarding.reassign_databases", NeedsNewOwner: true),
             new("revoke_access", "Remove server roles and revoke server permissions", "offboarding.revoke_server_access"),
             new("drop_users", "Drop the user in every online database", "offboarding.drop_users"),
@@ -61,7 +92,8 @@ public static class Workflows
         [
             "Only ONLINE databases are visited by 'Drop the user in every online database'. A user in an offline database stays behind as an orphan.",
             "'Drop the login' re-checks sessions, owned databases and owned jobs right before dropping, and fails if any remain.",
-        ]);
+        ],
+        ImpactLookup: "login_impact");
 
     public static WorkflowDefinition? Find(string id) =>
         string.Equals(id, OffboardingId, StringComparison.Ordinal) ? Offboarding : null;

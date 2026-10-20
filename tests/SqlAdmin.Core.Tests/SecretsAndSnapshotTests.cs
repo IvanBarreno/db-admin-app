@@ -39,6 +39,59 @@ public class SecretGeneratorTests
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => SecretGenerator.GeneratePassword(8));
     }
+
+    [Theory]
+    [InlineData(12)]
+    [InlineData(64)]
+    [InlineData(128)]
+    public void Requested_length_is_honoured_across_the_allowed_range(int length)
+    {
+        Assert.Equal(length, SecretGenerator.GeneratePassword(new PasswordOptions(Length: length)).Length);
+    }
+
+    [Fact]
+    public void Too_long_length_is_rejected()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => SecretGenerator.GeneratePassword(new PasswordOptions(Length: 129)));
+    }
+
+    [Fact]
+    public void Only_the_chosen_classes_appear_and_each_chosen_class_is_present()
+    {
+        for (var i = 0; i < 200; i++)
+        {
+            var pw = SecretGenerator.GeneratePassword(new PasswordOptions(Length: 16, Upper: true, Lower: false, Digits: true, Symbols: false));
+
+            Assert.All(pw, c => Assert.True(char.IsUpper(c) || char.IsDigit(c)));
+            Assert.Contains(pw, char.IsUpper);
+            Assert.Contains(pw, char.IsDigit);
+        }
+    }
+
+    [Fact]
+    public void Lookalikes_can_be_allowed_but_quotes_and_backslash_never_are()
+    {
+        var seen = new HashSet<char>();
+        for (var i = 0; i < 400; i++)
+        {
+            foreach (var c in SecretGenerator.GeneratePassword(new PasswordOptions(Length: 32, ExcludeLookalikes: false)))
+                seen.Add(c);
+        }
+
+        Assert.Contains(seen, c => "0O1lI".Contains(c)); // allowed now
+        Assert.DoesNotContain(seen, c => "'\"\\".Contains(c)); // never
+    }
+
+    [Fact]
+    public void No_character_class_is_a_problem_and_fewer_than_three_classes_is_a_policy_warning()
+    {
+        Assert.NotNull(new PasswordOptions(Upper: false, Lower: false, Digits: false, Symbols: false).Problem);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            SecretGenerator.GeneratePassword(new PasswordOptions(Upper: false, Lower: false, Digits: false, Symbols: false)));
+
+        Assert.Null(new PasswordOptions().PolicyWarning);
+        Assert.NotNull(new PasswordOptions(Symbols: false, Digits: false).PolicyWarning);
+    }
 }
 
 public class GeneratedSecretsAndRedactionTests

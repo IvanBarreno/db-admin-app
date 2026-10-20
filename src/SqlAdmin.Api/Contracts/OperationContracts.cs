@@ -35,7 +35,12 @@ public sealed record OperationPreviewResult(
     IReadOnlyList<string> Batches,
     bool Destructive = false,
     string? ConfirmToken = null,
-    bool RequiresServerName = false);
+    bool RequiresServerName = false,
+    // Preflight checks (YAML `checks:`) with their outcome; a blocking failure also withholds the token.
+    IReadOnlyList<CheckResult>? Checks = null,
+    // Dry run: the exact statements the run will execute, read from the real server state (null when the
+    // operation does not support it). Passwords are masked.
+    IReadOnlyList<DryRunStatement>? Statements = null);
 
 /// <summary>Result of /execute — same shape as the custom-SQL result, so the frontend reuses ResultsGrid.</summary>
 public sealed record OperationExecuteResult(
