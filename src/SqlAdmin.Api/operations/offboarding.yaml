@@ -22,6 +22,7 @@ operations:
     scope: server
     engines: [sqlserver]
     destructive: false
+    save_snapshot: true     # also written to snapshots/{server}/{login}-{timestamp}.json
     params:
       - name: login_name
         type: login

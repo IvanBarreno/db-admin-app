@@ -74,6 +74,7 @@ public static class OperationsEndpoints
                 IEngineRegistry engines,
                 IAuditStore auditStore,
                 DestructiveGuard guard,
+                IWebHostEnvironment env,
                 CancellationToken ct) =>
             {
                 var operation = registry.Find(id);
@@ -121,6 +122,15 @@ public static class OperationsEndpoints
                         conn.Server.CommandTimeoutSeconds, messages, ct);
                 }
 
+                // Rollback reference: keep the report as a file next to the exe (snapshots/ is git-ignored).
+                string? snapshotPath = null;
+                if (operation.SaveSnapshot && !scriptResult.Failed)
+                {
+                    snapshotPath = await SnapshotWriter.WriteAsync(
+                        Path.Combine(env.ContentRootPath, "snapshots"), request.ServerName, operation,
+                        values, scriptResult.ResultSets, DateTimeOffset.UtcNow, ct);
+                }
+
                 var response = new OperationExecuteResult(
                     Success: !scriptResult.Failed,
                     ElapsedMs: stopwatch.ElapsedMilliseconds,
@@ -131,7 +141,8 @@ public static class OperationsEndpoints
                     FailedBatchIndex: scriptResult.FailedBatchIndex,
                     Error: scriptResult.Error,
                     Steps: steps,
-                    GeneratedPasswords: generated.Count > 0 ? generated : null);
+                    GeneratedPasswords: generated.Count > 0 ? generated : null,
+                    SnapshotPath: snapshotPath);
 
                 await auditStore.RecordAsync(new AuditEntry
                 {

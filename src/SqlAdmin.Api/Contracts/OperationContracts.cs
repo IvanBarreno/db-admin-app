@@ -47,7 +47,9 @@ public sealed record OperationExecuteResult(
     string? Error,
     IReadOnlyList<ExecutionStepDto>? Steps = null,
     // Passwords the server generated (parameter name → value). Shown once, never stored or logged.
-    IReadOnlyDictionary<string, string>? GeneratedPasswords = null);
+    IReadOnlyDictionary<string, string>? GeneratedPasswords = null,
+    // Full path of the snapshot file, for operations with save_snapshot (null otherwise).
+    string? SnapshotPath = null);
 
 /// <summary>One per-database outcome of an all_databases run (null Steps for server/database scope).</summary>
 public sealed record ExecutionStepDto(string Database, string Status, int RowCount, string? Message);
