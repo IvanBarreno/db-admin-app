@@ -19,7 +19,8 @@ public sealed record AuditEntryResponse(
     string? Database,
     string Sql,
     string Status,
-    string? Detail)
+    string? Detail,
+    string? ParametersJson)
 {
     public static AuditEntryResponse From(AuditEntry entry) => new(
         entry.Id,
@@ -29,5 +30,6 @@ public sealed record AuditEntryResponse(
         entry.Database,
         entry.Sql,
         entry.Status,
-        entry.Detail);
+        entry.Detail,
+        entry.ParametersJson);
 }

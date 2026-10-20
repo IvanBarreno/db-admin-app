@@ -40,7 +40,8 @@ public static class OperationsEndpoints
                 OperationRequest request,
                 IOperationRegistry registry,
                 IServerCatalog catalog,
-                IEngineRegistry engines) =>
+                IEngineRegistry engines,
+                DestructiveGuard guard) =>
             {
                 var operation = registry.Find(id);
                 if (operation is null) return UnknownOperation(id);
@@ -51,7 +52,14 @@ public static class OperationsEndpoints
                 // A TemplateRenderException (missing/invalid parameter) becomes a 400 ProblemDetails
                 // in DomainExceptionHandler, so no try/catch is needed here.
                 var plan = OperationExecutor.Plan(operation, request.Params, engines.Get(serverDef.Engine).Dialect);
-                return TypedResults.Ok(new OperationPreviewResult(plan.OperationId, plan.Batches));
+
+                // Destructive for these values: hand back the token that /execute will demand.
+                var destructive = operation.RequiresConfirmation(request.Params);
+                var token = destructive
+                    ? guard.IssueToken(operation, request.ServerName, request.Database, request.Params)
+                    : null;
+                return TypedResults.Ok(new OperationPreviewResult(
+                    plan.OperationId, plan.Batches, destructive, token, destructive && serverDef.IsProduction));
             })
             .WithName("PreviewOperation")
             .WithSummary("Render the operation's template; nothing executes");
@@ -65,6 +73,8 @@ public static class OperationsEndpoints
                 IServerCatalog catalog,
                 IEngineRegistry engines,
                 IAuditStore auditStore,
+                DestructiveGuard guard,
+                IWebHostEnvironment env,
                 CancellationToken ct) =>
             {
                 var operation = registry.Find(id);
@@ -75,9 +85,21 @@ public static class OperationsEndpoints
 
                 var stopwatch = Stopwatch.StartNew();
 
+                // Destructive for these values? Then the previewed token (and, on Production, the typed
+                // server name) must match this exact request. 428 via DomainExceptionHandler otherwise.
+                // Checked against the values as the DBA sent them — generated passwords come after.
+                if (operation.RequiresConfirmation(request.Params))
+                {
+                    guard.Validate(operation, serverDef, request.Database, request.Params,
+                        request.ConfirmToken, request.ConfirmServerName);
+                }
+
+                // Blank "generate" password fields get a random password; it is returned once below.
+                var (values, generated) = OperationExecutor.ApplyGeneratedSecrets(operation, request.Params);
+
                 // Render first: bad parameters fail fast (400 via DomainExceptionHandler) without
                 // opening a connection or writing an audit row.
-                var plan = OperationExecutor.Plan(operation, request.Params, engines.Get(serverDef.Engine).Dialect);
+                var plan = OperationExecutor.Plan(operation, values, engines.Get(serverDef.Engine).Dialect);
 
                 ScriptResult scriptResult;
                 IReadOnlyList<ExecutionStepDto>? steps = null;
@@ -85,7 +107,7 @@ public static class OperationsEndpoints
                 {
                     // The executor opens its own connections (one per database).
                     var all = await AllDatabasesExecutor.ExecuteAsync(
-                        operation, request.Params, request.ServerName, connections, ct);
+                        operation, values, request.ServerName, connections, ct);
                     scriptResult = all.Combined;
                     steps = all.Steps.Select(s => new ExecutionStepDto(s.Database, s.Status, s.RowCount, s.Message)).ToList();
                 }
@@ -96,8 +118,17 @@ public static class OperationsEndpoints
                     using var subscription = conn.Engine.SubscribeToMessages(conn.Connection, messages);
 
                     scriptResult = await OperationExecutor.ExecuteAsync(
-                        operation, request.Params, conn.Connection, conn.Engine.Dialect,
+                        operation, values, conn.Connection, conn.Engine.Dialect,
                         conn.Server.CommandTimeoutSeconds, messages, ct);
+                }
+
+                // Rollback reference: keep the report as a file next to the exe (snapshots/ is git-ignored).
+                string? snapshotPath = null;
+                if (operation.SaveSnapshot && !scriptResult.Failed)
+                {
+                    snapshotPath = await SnapshotWriter.WriteAsync(
+                        Path.Combine(env.ContentRootPath, "snapshots"), request.ServerName, operation,
+                        values, scriptResult.ResultSets, DateTimeOffset.UtcNow, ct);
                 }
 
                 var response = new OperationExecuteResult(
@@ -109,7 +140,9 @@ public static class OperationsEndpoints
                     Messages: scriptResult.Messages,
                     FailedBatchIndex: scriptResult.FailedBatchIndex,
                     Error: scriptResult.Error,
-                    Steps: steps);
+                    Steps: steps,
+                    GeneratedPasswords: generated.Count > 0 ? generated : null,
+                    SnapshotPath: snapshotPath);
 
                 await auditStore.RecordAsync(new AuditEntry
                 {
@@ -120,6 +153,8 @@ public static class OperationsEndpoints
                     Sql = $"[{operation.Id}]\n" + string.Join("\nGO\n", plan.Batches),
                     Status = response.Success ? "Success" : "Failed",
                     Detail = response.Error,
+                    // Password-typed values (including generated ones) are stored as "***".
+                    ParametersJson = OperationExecutor.RedactedParametersJson(operation, values),
                     Steps = (steps ?? []).Select((s, i) => new AuditStep
                     {
                         StepNo = i + 1,

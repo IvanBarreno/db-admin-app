@@ -1,7 +1,9 @@
 # operations/changes.yaml — modify existing logins/users (§2 "Changes").
 # Same dynamic-SQL pattern as provisioning.yaml: values are bound parameters, QUOTENAME escapes
 # them into the statement, Choice values are validated by TemplateRenderer.
-# Nothing here drops anything — destructive steps live in the Phase 4 offboarding wizard.
+# Nothing here drops a login or user (that is offboarding.yaml). Operations that REMOVE access
+# (role DROP, permission REVOKE/DENY, disabling a login) use destructive / destructive_when, so
+# they need the previewed confirm token; adding access does not.
 
 operations:
   - id: changes.reset_password
@@ -14,9 +16,11 @@ operations:
       - name: login_name
         type: login
         required: true
+      # Blank = the server generates a strong password and shows it once after the run.
       - name: password
         type: password
-        required: true
+        required: false
+        generate: true
       - name: unlock
         type: bool
         required: false
@@ -37,6 +41,7 @@ operations:
     scope: server
     engines: [sqlserver]
     destructive: false
+    destructive_when: { param: action, values: [DISABLE] }
     params:
       - name: login_name
         type: login
@@ -58,6 +63,7 @@ operations:
     scope: server
     engines: [sqlserver]
     destructive: false
+    destructive_when: { param: action, values: [DROP] }
     params:
       - name: login_name
         type: login
@@ -87,6 +93,7 @@ operations:
     scope: server
     engines: [sqlserver]
     destructive: false
+    destructive_when: { param: action, values: [REVOKE, DENY] }
     params:
       - name: login_name
         type: login
@@ -135,6 +142,7 @@ operations:
     scope: database
     engines: [sqlserver]
     destructive: false
+    destructive_when: { param: action, values: [DROP] }
     params:
       - name: user_name
         type: user

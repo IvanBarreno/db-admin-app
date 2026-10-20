@@ -36,6 +36,9 @@ namespace SqlAdmin.Infrastructure.Audit.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ParametersJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ServerName")
                         .IsRequired()
                         .HasColumnType("TEXT");

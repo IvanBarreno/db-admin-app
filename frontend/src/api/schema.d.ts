@@ -243,6 +243,7 @@ export interface components {
             sql: string;
             status: string;
             detail: string | null;
+            parametersJson: string | null;
         };
         AuditStepResponse: {
             /** Format: int32 */
@@ -325,6 +326,12 @@ export interface components {
             error: string | null;
             /** @default null */
             steps: components["schemas"]["ExecutionStepDto"][] | null;
+            /** @default null */
+            generatedPasswords: {
+                [key: string]: string;
+            } | null;
+            /** @default null */
+            snapshotPath: string | null;
         };
         OperationParameter: {
             name: string;
@@ -332,12 +339,19 @@ export interface components {
             required?: boolean;
             default?: string | null;
             choices?: string[] | null;
+            generate?: boolean;
         };
         /** @enum {unknown} */
         OperationParameterType: "Sysname" | "String" | "Int" | "Bool" | "Password" | "Choice" | "Database" | "Login" | "User";
         OperationPreviewResult: {
             operationId: string;
             batches: string[];
+            /** @default false */
+            destructive: boolean;
+            /** @default null */
+            confirmToken: string | null;
+            /** @default false */
+            requiresServerName: boolean;
         };
         OperationRequest: {
             serverName: string;
@@ -345,6 +359,10 @@ export interface components {
             params: {
                 [key: string]: string;
             };
+            /** @default null */
+            confirmToken: string | null;
+            /** @default null */
+            confirmServerName: string | null;
         };
         /** @enum {unknown} */
         OperationScope: "Server" | "Database" | "AllDatabases";

@@ -60,12 +60,18 @@ public abstract class SqlClientEngineBase : IDatabaseEngine
             IsSysAdmin: reader.GetInt32(5) == 1);
     }
 
+    /// <summary>
+    /// T-SQL expression that yields a database's owner name. SUSER_SNAME(owner_sid) maps the SID to a
+    /// login name (NULL when unknown, e.g. after a restore). Azure SQL rejects SUSER_SNAME with an
+    /// argument ("cannot be invoked with parameters in this version of SQL Server"), so it overrides this.
+    /// </summary>
+    protected virtual string DatabaseOwnerExpression => "SUSER_SNAME(owner_sid)";
+
     public async Task<IReadOnlyList<DatabaseInfo>> ListDatabasesAsync(DbConnection connection, CancellationToken ct)
     {
-        // database_id 1-4 are master, tempdb, model, msdb. SUSER_SNAME(owner_sid) maps the
-        // owner SID to a login name (NULL when the SID is unknown, e.g. after a restore).
-        const string sql = """
-            SELECT name, state_desc, SUSER_SNAME(owner_sid) AS owner_name, state
+        // database_id 1-4 are master, tempdb, model, msdb.
+        var sql = $"""
+            SELECT name, state_desc, {DatabaseOwnerExpression} AS owner_name, state
             FROM sys.databases
             WHERE database_id > 4
             ORDER BY name;

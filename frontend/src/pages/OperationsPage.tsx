@@ -3,6 +3,7 @@ import { EnvBadge } from '../components/EnvBadge'
 import { ParamForm } from '../components/ParamForm'
 import { ProductionBanner } from '../components/ProductionBanner'
 import { ResultsGrid } from '../components/ResultsGrid'
+import { GeneratedPasswords } from '../components/GeneratedPasswords'
 import { StepLog } from '../components/StepLog'
 import { useDatabases, useServers } from '../api/servers'
 import { useExecuteOperation, useOperations, usePreviewOperation } from '../api/operations'
@@ -24,8 +25,31 @@ export default function OperationsPage() {
 
   const server = servers.data?.find((s) => s.name === serverName)
 
+  // Destructive operations: the preview hands back a token bound to the exact request, and
+  // Production servers also need the server name typed. Both go back with /execute.
+  const [typedServerName, setTypedServerName] = useState('')
+  const pendingConfirm = preview.data?.destructive ? preview.data : null
+  const confirmReady = !pendingConfirm?.requiresServerName || typedServerName === serverName
+
   function buildRequest() {
-    return { serverName: serverName!, database: database || null, params: paramValues }
+    return {
+      serverName: serverName!,
+      database: database || null,
+      params: paramValues,
+      confirmToken: null,
+      confirmServerName: null,
+    }
+  }
+
+  /** The token only fits the request it was issued for, so any edit throws the preview away. */
+  function resetPreview() {
+    preview.reset()
+    setTypedServerName('')
+  }
+
+  function changeParams(values: Record<string, string>) {
+    setParamValues(values)
+    resetPreview()
   }
 
   function runPreview() {
@@ -33,9 +57,17 @@ export default function OperationsPage() {
     preview.mutate(buildRequest())
   }
 
-  function runExecute() {
+  async function runExecute() {
     if (!serverName || !operationId) return
-    execute.mutate(buildRequest())
+    // Always preview first: it tells us whether this run is destructive and gives the token.
+    const current = preview.data ?? (await preview.mutateAsync(buildRequest()).catch(() => null))
+    if (!current) return // preview failed; its error is shown below
+    if (current.destructive && !(preview.data && confirmReady)) return // show the confirm panel first
+    execute.mutate({
+      ...buildRequest(),
+      confirmToken: current.confirmToken,
+      confirmServerName: current.requiresServerName ? typedServerName : null,
+    })
   }
 
   return (
@@ -57,7 +89,7 @@ export default function OperationsPage() {
                 setServerName(e.target.value || null)
                 setDatabase('')
                 setOperationId(null)
-                setParamValues({})
+                changeParams({})
               }}
               className="rounded border border-slate-300 px-2 py-1.5"
             >
@@ -74,7 +106,10 @@ export default function OperationsPage() {
             <span className="mb-1 block text-slate-600">Database</span>
             <select
               value={database}
-              onChange={(e) => setDatabase(e.target.value)}
+              onChange={(e) => {
+                setDatabase(e.target.value)
+                resetPreview()
+              }}
               disabled={!serverName || databases.isPending}
               className="rounded border border-slate-300 px-2 py-1.5 disabled:opacity-50"
             >
@@ -101,7 +136,7 @@ export default function OperationsPage() {
               value={operationId ?? ''}
               onChange={(e) => {
                 setOperationId(e.target.value || null)
-                setParamValues({})
+                changeParams({})
               }}
               className="w-full max-w-md rounded border border-slate-300 px-2 py-1.5"
             >
@@ -122,7 +157,7 @@ export default function OperationsPage() {
           <ParamForm
             params={operation.params}
             values={paramValues}
-            onChange={setParamValues}
+            onChange={changeParams}
             serverName={serverName}
             database={database}
           />
@@ -139,10 +174,12 @@ export default function OperationsPage() {
             <button
               type="button"
               onClick={runExecute}
-              disabled={execute.isPending}
-              className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+              disabled={execute.isPending || preview.isPending || !confirmReady}
+              className={`rounded px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
+                pendingConfirm ? 'bg-red-700 hover:bg-red-600' : 'bg-slate-800 hover:bg-slate-700'
+              }`}
             >
-              {execute.isPending ? 'Running…' : 'Execute'}
+              {execute.isPending ? 'Running…' : pendingConfirm ? 'Confirm and execute' : 'Execute'}
             </button>
             {execute.isError && <span className="text-sm text-red-700">{execute.error.message}</span>}
             {execute.data && <span className="text-sm text-slate-500">{execute.data.elapsedMs} ms</span>}
@@ -155,6 +192,30 @@ export default function OperationsPage() {
             </pre>
           )}
 
+          {pendingConfirm && (
+            <div className="space-y-2 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+              <p className="font-medium">⚠ Destructive operation. Review the SQL above, then confirm.</p>
+              {pendingConfirm.requiresServerName && (
+                <label className="block">
+                  <span className="mb-1 block">
+                    Production server: type <strong>{serverName}</strong> to enable the button.
+                  </span>
+                  <input
+                    value={typedServerName}
+                    onChange={(e) => setTypedServerName(e.target.value)}
+                    className="rounded border border-red-300 bg-white px-2 py-1.5"
+                  />
+                </label>
+              )}
+            </div>
+          )}
+
+          {execute.data?.generatedPasswords && <GeneratedPasswords passwords={execute.data.generatedPasswords} />}
+          {execute.data?.snapshotPath && (
+            <p className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+              Snapshot saved: <code className="break-all">{execute.data.snapshotPath}</code>
+            </p>
+          )}
           {execute.data?.steps && <StepLog steps={execute.data.steps} />}
           {execute.data && <ResultsGrid result={execute.data} />}
         </div>

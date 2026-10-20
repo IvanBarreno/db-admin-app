@@ -30,4 +30,10 @@ public sealed record OperationParameter
     public bool Required { get; init; } = true;
     public string? Default { get; init; }
     public IReadOnlyList<string>? Choices { get; init; }
+
+    /// <summary>
+    /// Password parameters only: when the DBA leaves the field blank the server generates a strong
+    /// password (<see cref="SecretGenerator"/>), uses it, and returns it once in the execute response.
+    /// </summary>
+    public bool Generate { get; init; }
 }

@@ -1,0 +1,196 @@
+# operations/offboarding.yaml — remove a person's access (§2 "Offboarding").
+#
+# Run these IN ORDER from the Operations page; each step is optional and independent:
+#   1. offboarding.snapshot            read-only report: what the login has today (rollback reference)
+#   2. changes.set_login_enabled       DISABLE (stops new connections, keeps everything restorable)
+#   3. offboarding.kill_sessions
+#   4. offboarding.reassign_jobs
+#   5. offboarding.reassign_databases
+#   6. offboarding.revoke_server_access
+#   7. offboarding.drop_users          every online database (fixes schema ownership first)
+#   8. offboarding.drop_login          re-checks that nothing still depends on the login
+#
+# Everything here is destructive: preview returns a confirm token, and on a Production server
+# the DBA must type the server name. Same dynamic-SQL pattern as changes.yaml (QUOTENAME + EXEC).
+# Some steps need sysadmin (job/database ownership, dropping sysadmin membership).
+# T-SQL NOT yet run against a real server.
+
+operations:
+  - id: offboarding.snapshot
+    name: "1. Snapshot a login's access (read-only)"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: false
+    save_snapshot: true     # also written to snapshots/{server}/{login}-{timestamp}.json
+    params:
+      - name: login_name
+        type: login
+        required: true
+    sql: |
+      -- Result set 1: the login itself.
+      SELECT name AS login_name, type_desc, is_disabled, default_database_name, create_date
+      FROM sys.server_principals WHERE name = @login_name;
+
+      -- Result set 2: server roles.
+      SELECT r.name AS server_role
+      FROM sys.server_role_members srm
+      JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+      JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+      WHERE m.name = @login_name ORDER BY r.name;
+
+      -- Result set 3: explicit server permissions.
+      SELECT permission_name, state_desc
+      FROM sys.server_permissions
+      WHERE grantee_principal_id = SUSER_ID(@login_name) ORDER BY permission_name;
+
+      -- Result set 4: databases owned.
+      SELECT name AS owned_database FROM sys.databases WHERE owner_sid = SUSER_SID(@login_name);
+
+      -- Result set 5: SQL Agent jobs owned.
+      SELECT j.name AS owned_job, j.enabled
+      FROM msdb.dbo.sysjobs j WHERE j.owner_sid = SUSER_SID(@login_name);
+
+      -- Result set 6: active sessions.
+      SELECT session_id, host_name, program_name, status, login_time
+      FROM sys.dm_exec_sessions WHERE login_name = @login_name AND is_user_process = 1;
+
+  - id: offboarding.kill_sessions
+    name: "3. Kill active sessions of a login"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+    sql: |
+      DECLARE @sql nvarchar(max) = N'';
+      SELECT @sql += N'KILL ' + CAST(session_id AS nvarchar(10)) + N'; '
+      FROM sys.dm_exec_sessions
+      WHERE login_name = @login_name AND is_user_process = 1 AND session_id <> @@SPID;
+      EXEC (@sql);
+      SELECT COUNT(*) AS sessions_remaining
+      FROM sys.dm_exec_sessions
+      WHERE login_name = @login_name AND is_user_process = 1;
+
+  - id: offboarding.reassign_jobs
+    name: "4. Reassign SQL Agent jobs to another login"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+      - name: new_owner
+        type: login
+        required: true
+    sql: |
+      EXEC msdb.dbo.sp_manage_jobs_by_login
+        @action = N'REASSIGN',
+        @current_owner_login_name = @login_name,
+        @new_owner_login_name = @new_owner;
+      SELECT j.name AS job_still_owned
+      FROM msdb.dbo.sysjobs j WHERE j.owner_sid = SUSER_SID(@login_name);
+
+  - id: offboarding.reassign_databases
+    name: "5. Reassign owned databases to another login"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+      - name: new_owner
+        type: login
+        required: true
+    sql: |
+      DECLARE @sql nvarchar(max) = N'';
+      SELECT @sql += N'ALTER AUTHORIZATION ON DATABASE::' + QUOTENAME(name)
+        + N' TO ' + QUOTENAME(@new_owner) + N'; '
+      FROM sys.databases WHERE owner_sid = SUSER_SID(@login_name);
+      EXEC (@sql);
+      SELECT name AS database_still_owned FROM sys.databases WHERE owner_sid = SUSER_SID(@login_name);
+
+  - id: offboarding.revoke_server_access
+    name: "6. Remove server roles and revoke server permissions"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+    sql: |
+      DECLARE @sql nvarchar(max) = N'';
+      SELECT @sql += N'ALTER SERVER ROLE ' + QUOTENAME(r.name) + N' DROP MEMBER ' + QUOTENAME(@login_name) + N'; '
+      FROM sys.server_role_members srm
+      JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+      JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+      WHERE m.name = @login_name;
+      -- class 100 = server-level permissions (not endpoints / impersonation grants).
+      SELECT @sql += N'REVOKE ' + permission_name COLLATE DATABASE_DEFAULT + N' FROM ' + QUOTENAME(@login_name) + N'; '
+      FROM sys.server_permissions
+      WHERE grantee_principal_id = SUSER_ID(@login_name) AND class = 100 AND state IN ('G', 'W', 'D');
+      EXEC (@sql);
+      SELECT r.name AS server_role_remaining
+      FROM sys.server_role_members srm
+      JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+      JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+      WHERE m.name = @login_name;
+
+  - id: offboarding.drop_users
+    name: "7. Drop the login's user in every online database"
+    category: offboarding
+    scope: all_databases
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+    sql: |
+      -- Find the user by SID, so a renamed user is still found.
+      DECLARE @user sysname = (
+        SELECT TOP (1) name FROM sys.database_principals
+        WHERE sid = SUSER_SID(@login_name) AND type IN ('S', 'U', 'G') AND name <> N'dbo');
+      IF @user IS NULL
+        SELECT CAST(NULL AS sysname) AS dropped_user, N'no matching user' AS result;
+      ELSE
+      BEGIN
+        -- DROP USER fails while the user owns a schema: hand those to dbo first.
+        DECLARE @sql nvarchar(max) = N'';
+        SELECT @sql += N'ALTER AUTHORIZATION ON SCHEMA::' + QUOTENAME(name) + N' TO dbo; '
+        FROM sys.schemas WHERE principal_id = DATABASE_PRINCIPAL_ID(@user);
+        SET @sql += N'DROP USER ' + QUOTENAME(@user) + N';';
+        EXEC (@sql);
+        SELECT @user AS dropped_user, N'dropped' AS result;
+      END
+
+  - id: offboarding.drop_login
+    name: "8. Drop the login"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+    sql: |
+      -- Re-check preconditions right now instead of trusting an earlier screen.
+      IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE login_name = @login_name AND is_user_process = 1)
+        THROW 50000, N'The login still has active sessions: run step 3 first.', 1;
+      IF EXISTS (SELECT 1 FROM sys.databases WHERE owner_sid = SUSER_SID(@login_name))
+        THROW 50000, N'The login still owns databases: run step 5 first.', 1;
+      IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE owner_sid = SUSER_SID(@login_name))
+        THROW 50000, N'The login still owns SQL Agent jobs: run step 4 first.', 1;
+      DECLARE @sql nvarchar(max) = N'DROP LOGIN ' + QUOTENAME(@login_name);
+      EXEC (@sql);
+      SELECT CASE WHEN SUSER_ID(@login_name) IS NULL THEN N'dropped' ELSE N'still exists' END AS result;

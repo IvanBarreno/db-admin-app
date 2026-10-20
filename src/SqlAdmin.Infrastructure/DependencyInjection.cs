@@ -40,6 +40,9 @@ public static class DependencyInjection
         var operationsDirectory = configuration["Operations:Directory"] ?? "operations";
         services.AddSingleton<IOperationRegistry>(_ => new OperationRegistry(operationsDirectory));
 
+        // Singleton: the confirm-token key lives in memory for the life of the process.
+        services.AddSingleton<DestructiveGuard>();
+
         // --- Audit log: SQLite next to the exe, one file, append-only ---
         var auditDbPath = configuration["AuditDb:Path"] ?? "audit.db";
         services.AddDbContext<AuditDbContext>(options => options.UseSqlite($"Data Source={auditDbPath}"));
