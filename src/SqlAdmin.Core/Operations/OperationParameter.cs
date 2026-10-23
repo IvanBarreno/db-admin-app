@@ -75,6 +75,31 @@ public sealed record OperationParameter
     /// <summary>Preselects a value (typically a Choice) from the current state of the server; see <see cref="ParameterSuggestion"/>.</summary>
     public ParameterSuggestion? Suggest { get; init; }
 
+    /// <summary>Human label for the field; null = the form derives one from the name (<c>login_name</c> → "login name").</summary>
+    public string? Label { get; init; }
+
+    /// <summary>What this field is for, shown as a tooltip and under the field. Filled from the YAML or the shared glossary.</summary>
+    public string? Help { get; init; }
+
+    /// <summary>Choice only: what each choice does (<c>DISABLE</c> → "Blocks the login from connecting…"), shown as option tooltips.</summary>
+    public IReadOnlyDictionary<string, string>? ChoiceHelp { get; init; }
+
+    /// <summary>
+    /// Login / user parameters only. True (default): the principal is being CHANGED by the operation, so a protected
+    /// login (the one the app connects with, or one listed in <c>ProtectedLogins</c>) is refused. False for a login
+    /// that merely RECEIVES something, such as the new owner of databases or jobs.
+    /// </summary>
+    public bool Protect { get; init; } = true;
+
+    /// <summary>Shown inside a collapsed "Advanced" section of the form (optional refinements).</summary>
+    public bool Advanced { get; init; }
+
+    /// <summary>
+    /// A lookup of prefixes to offer as click-to-insert chips (e.g. <c>windows_domains</c> → "CONTOSO\"), for names
+    /// that must be written as <c>PREFIX\name</c>.
+    /// </summary>
+    public string? PrefixLookup { get; init; }
+
     /// <summary>The lookup that feeds this parameter: explicit <c>source:</c>, else implied by Login/User/Database.</summary>
     public string? EffectiveSource => Source ?? Type switch
     {

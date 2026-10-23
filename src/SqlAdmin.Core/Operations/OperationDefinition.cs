@@ -16,6 +16,15 @@ public sealed record OperationDefinition
     public required IReadOnlyList<string> Engines { get; init; }
     public bool Destructive { get; init; }
 
+    /// <summary>One or two sentences on what the operation does and when to use it; shown under the operation picker.</summary>
+    public string? Description { get; init; }
+
+    /// <summary>
+    /// True: the operation only reads (audits, the snapshot). Read-only operations may look at protected logins;
+    /// every other operation is refused when it would change one (see <see cref="ProtectedPrincipals"/>).
+    /// </summary>
+    public bool ReadOnly { get; init; }
+
     /// <summary>True: after a successful run the result sets are saved to <c>snapshots/</c> (see <see cref="SnapshotWriter"/>).</summary>
     public bool SaveSnapshot { get; init; }
 

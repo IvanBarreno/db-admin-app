@@ -22,6 +22,7 @@ operations:
     scope: server
     engines: [sqlserver]
     destructive: false
+    read_only: true         # only reads: allowed even for a protected login (view-only)
     save_snapshot: true     # also written to snapshots/{server}/{login}-{timestamp}.json
     params:
       - name: login_name
@@ -103,10 +104,14 @@ operations:
       - name: login_name
         type: login
         required: true
+      # protect: false — the new owner only RECEIVES the jobs, so even a protected login may be chosen here.
       - name: new_owner
         type: login
         required: true
         must_exist: true
+        protect: false
+        label: "New owner of the jobs"
+        help: "The login that will own the SQL Agent jobs handed over. It must exist, be enabled, and differ from the login being offboarded."
       # Which of the login's jobs to hand over; untick the ones that should stay (or be handled by hand).
       - name: jobs
         type: string
@@ -152,10 +157,14 @@ operations:
       - name: login_name
         type: login
         required: true
+      # protect: false — the new owner only RECEIVES the databases.
       - name: new_owner
         type: login
         required: true
         must_exist: true
+        protect: false
+        label: "New owner of the databases"
+        help: "The login that will own the databases handed over. It must exist, be enabled, and differ from the login being offboarded."
       # Which of the login's databases get the new owner.
       - name: owned_databases
         type: string

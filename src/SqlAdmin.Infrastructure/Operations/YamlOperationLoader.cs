@@ -18,29 +18,48 @@ public static class YamlOperationLoader
     {
         if (!Directory.Exists(path)) return [];
 
-        return Directory.EnumerateFiles(path, "*.yaml", SearchOption.AllDirectories)
+        // Pass 1: parse every file and merge the shared help text; pass 2: build the operations with it.
+        var files = Directory.EnumerateFiles(path, "*.yaml", SearchOption.AllDirectories)
             .OrderBy(f => f, StringComparer.Ordinal) // deterministic order across machines/OSes
-            .SelectMany(LoadFile)
+            .Select(f => (File: f, Dto: ParseFile(f)))
             .ToList();
+
+        var glossary = MergeGlossary(files);
+        return files.SelectMany(f => f.Dto.Operations.Select(dto => MapOperation(dto, f.File, glossary))).ToList();
     }
 
-    private static IReadOnlyList<OperationDefinition> LoadFile(string file)
+    private static OperationFileDto ParseFile(string file)
     {
-        var yaml = File.ReadAllText(file);
-        OperationFileDto fileDto;
         try
         {
-            fileDto = Deserializer.Deserialize<OperationFileDto>(yaml);
+            return Deserializer.Deserialize<OperationFileDto>(File.ReadAllText(file)) ?? new OperationFileDto();
         }
         catch (Exception ex)
         {
             throw new OperationYamlException(file, $"could not parse YAML: {ex.Message}");
         }
-
-        return fileDto.Operations.Select(dto => MapOperation(dto, file)).ToList();
     }
 
-    private static OperationDefinition MapOperation(OperationYamlDto dto, string file)
+    private static GlossaryYamlDto MergeGlossary(IEnumerable<(string File, OperationFileDto Dto)> files)
+    {
+        var merged = new GlossaryYamlDto();
+        foreach (var (file, dto) in files.Where(f => f.Dto.Glossary is not null))
+        {
+            foreach (var (id, text) in dto.Glossary!.Operations) Add(merged.Operations, id, text, file);
+            foreach (var (name, entry) in dto.Glossary.Parameters) Add(merged.Parameters, name, entry, file);
+            foreach (var (value, text) in dto.Glossary.Choices) Add(merged.Choices, value, text, file);
+        }
+
+        return merged;
+
+        static void Add<T>(Dictionary<string, T> target, string key, T value, string file)
+        {
+            if (!target.TryAdd(key, value))
+                throw new OperationYamlException(file, $"glossary entry '{key}' is defined twice.");
+        }
+    }
+
+    private static OperationDefinition MapOperation(OperationYamlDto dto, string file, GlossaryYamlDto glossary)
     {
         if (string.IsNullOrWhiteSpace(dto.Id)) throw new OperationYamlException(file, "'id' is required.");
         if (string.IsNullOrWhiteSpace(dto.Name)) throw new OperationYamlException(file, "'name' is required.");
@@ -72,10 +91,13 @@ public static class YamlOperationLoader
             Scope = scope,
             Engines = dto.Engines,
             Destructive = dto.Destructive,
+            Description = dto.Description ?? glossary.Operations.GetValueOrDefault(dto.Id),
+            // Audits only read; anything else says so with `read_only: true` (e.g. the offboarding snapshot).
+            ReadOnly = dto.ReadOnly || string.Equals(dto.Category, "audit", StringComparison.OrdinalIgnoreCase),
             SaveSnapshot = dto.SaveSnapshot,
             DestructiveWhen = destructiveWhen,
             Sql = dto.Sql,
-            Params = dto.Params.Select(p => MapParameter(p, file)).ToList(),
+            Params = dto.Params.Select(p => MapParameter(p, file, glossary)).ToList(),
             Checks = dto.Checks.Select(c => MapCheck(c, dto.Id, file)).ToList(),
         };
     }
@@ -89,7 +111,7 @@ public static class YamlOperationLoader
         return new OperationCheck(c.Id, severity, c.Message, c.Sql);
     }
 
-    private static OperationParameter MapParameter(OperationParameterYamlDto p, string file)
+    private static OperationParameter MapParameter(OperationParameterYamlDto p, string file, GlossaryYamlDto glossary)
     {
         if (string.IsNullOrWhiteSpace(p.Name))
             throw new OperationYamlException(file, "a parameter is missing 'name'.");
@@ -128,8 +150,27 @@ public static class YamlOperationLoader
             suggest = new ParameterSuggestion(s.Lookup, s.Column, s.DependsOn, s.Map);
         }
 
+        // Help text: the parameter's own, else the shared glossary entry for its name / its choice values.
+        var shared = glossary.Parameters.GetValueOrDefault(p.Name);
+        Dictionary<string, string>? choiceHelp = null;
+        if (type == OperationParameterType.Choice && p.Choices is { Count: > 0 })
+        {
+            choiceHelp = [];
+            foreach (var choice in p.Choices)
+            {
+                var text = p.ChoiceHelp?.GetValueOrDefault(choice) ?? glossary.Choices.GetValueOrDefault(choice);
+                if (text is not null) choiceHelp[choice] = text;
+            }
+        }
+
         return new OperationParameter
         {
+            Label = p.Label ?? shared?.Label,
+            Help = p.Help ?? shared?.Help,
+            ChoiceHelp = choiceHelp,
+            Protect = p.Protect,
+            Advanced = p.Advanced,
+            PrefixLookup = p.PrefixLookup,
             Suggest = suggest,
             Multi = p.Multi,
             DefaultAll = p.DefaultAll,

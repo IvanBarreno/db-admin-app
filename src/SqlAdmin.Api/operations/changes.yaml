@@ -93,7 +93,7 @@ operations:
       - name: stop_on_error
         type: bool
         required: false
-        default: "false"
+        default: "true"
     checks:
       - id: not_self
         message: "You cannot disable the login you are connected with."
@@ -163,7 +163,7 @@ operations:
       - name: stop_on_error
         type: bool
         required: false
-        default: "false"
+        default: "true"
     sql: |
       DECLARE @items TABLE (n int IDENTITY(1,1), act varchar(10), item nvarchar(256));
       INSERT @items (act, item) SELECT 'ADD', value FROM OPENJSON(@roles_to_add);
@@ -225,7 +225,7 @@ operations:
       - name: stop_on_error
         type: bool
         required: false
-        default: "false"
+        default: "true"
     sql: |
       DECLARE @items TABLE (n int IDENTITY(1,1), item nvarchar(256));
       INSERT @items (item) SELECT value FROM OPENJSON(@permissions);
@@ -342,7 +342,7 @@ operations:
       - name: stop_on_error
         type: bool
         required: false
-        default: "false"
+        default: "true"
     sql: |
       DECLARE @items TABLE (n int IDENTITY(1,1), act varchar(10), item nvarchar(256));
       INSERT @items (act, item) SELECT 'ADD', value FROM OPENJSON(@roles_to_add);
@@ -422,7 +422,7 @@ operations:
       - name: stop_on_error
         type: bool
         required: false
-        default: "false"
+        default: "true"
     sql: |
       DECLARE @items TABLE (n int IDENTITY(1,1), item nvarchar(256));
       INSERT @items (item) SELECT value FROM OPENJSON(@users);
@@ -469,7 +469,7 @@ operations:
       - name: stop_on_error
         type: bool
         required: false
-        default: "false"
+        default: "true"
     sql: |
       DECLARE @items TABLE (n int IDENTITY(1,1), item nvarchar(256));
       INSERT @items (item) SELECT value FROM OPENJSON(@users);
@@ -523,7 +523,7 @@ operations:
       - name: stop_on_error
         type: bool
         required: false
-        default: "false"
+        default: "true"
     sql: |
       DECLARE @items TABLE (n int IDENTITY(1,1), item nvarchar(256));
       INSERT @items (item) SELECT value FROM OPENJSON(@jobs);

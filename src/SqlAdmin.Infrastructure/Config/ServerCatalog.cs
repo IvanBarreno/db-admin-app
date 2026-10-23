@@ -48,6 +48,7 @@ public sealed class ServerCatalog : IServerCatalog
             ? ServerEnvironment.Development
             : Enum.Parse<ServerEnvironment>(item.Environment, ignoreCase: true),
         Tags = item.Tags.AsReadOnly(),
+        ProtectedLogins = item.ProtectedLogins.AsReadOnly(),
         Encrypt = item.Encrypt ?? defaults.Encrypt,
         TrustServerCertificate = ovr?.TrustServerCertificate ?? item.TrustServerCertificate ?? defaults.TrustServerCertificate,
         CommandTimeoutSeconds = ovr?.CommandTimeoutSeconds ?? item.CommandTimeoutSeconds ?? defaults.CommandTimeoutSeconds,

@@ -247,6 +247,10 @@ public sealed class AllDatabasesExecutorTests : IDisposable
         public Task<IReadOnlyList<DatabaseInfo>> ListDatabasesAsync(DbConnection connection, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<DatabaseInfo>>(Databases.ToList());
 
+        public Task<string?> GetConnectedLoginAsync(DbConnection connection, CancellationToken ct) => Task.FromResult<string?>("app_login");
+        public Task<string?> GetUserLoginAsync(DbConnection connection, string userName, CancellationToken ct) => Task.FromResult<string?>(null);
+        public bool IsPermissionError(DbException error) => false;
+
         // A real engine hooks SqlConnection.InfoMessage; the fake just emits one message up front.
         public IDisposable SubscribeToMessages(DbConnection connection, List<string> messages)
         {

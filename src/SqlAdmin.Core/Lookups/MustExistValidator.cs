@@ -55,7 +55,7 @@ public static class MustExistValidator
 
                 var args = lookup.Args.ToDictionary(a => a, a => values.GetValueOrDefault(a));
                 var result = await LookupRunner.RunAsync(
-                    lookup, conn.Connection, conn.Engine.Dialect, args, conn.Server.CommandTimeoutSeconds, ct);
+                    lookup, conn.Connection, conn.Engine, args, conn.Server.CommandTimeoutSeconds, ct);
 
                 if (result.Warning is not null) continue;
 

@@ -59,18 +59,31 @@ operations:
     engines: [sqlserver]
     destructive: false
     params:
+      # Written DOMAIN\name. The form offers the server's own domain (and the ones already used by existing
+      # Windows logins) as click-to-insert prefixes.
       - name: login_name
         type: string
         required: true
+        prefix_lookup: windows_domains
+        help: "The Windows account or group, written DOMAIN\\name (for example CONTOSO\\jperez). Click a domain below to insert it."
       - name: default_database
         type: database
         required: false
         default: ""
     checks:
+      - id: format
+        message: "Write the account as DOMAIN\\name (for example CONTOSO\\jperez)."
+        sql: |
+          SELECT 1 WHERE CHARINDEX('\', @login_name) <= 1 OR CHARINDEX('\', @login_name) = LEN(@login_name);
       - id: login_exists
         message: "A login with this name already exists."
         sql: |
           SELECT 1 WHERE EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @login_name);
+      # CREATE LOGIN ... FROM WINDOWS asks Windows to resolve the account; SUSER_SID does the same question first.
+      - id: windows_resolves
+        message: "Windows could not find this account (wrong domain or name, or the SQL Server host cannot reach a domain controller): CREATE LOGIN would fail."
+        sql: |
+          SELECT 1 WHERE CHARINDEX('\', @login_name) > 1 AND SUSER_SID(@login_name) IS NULL;
     sql: |
       DECLARE @sql nvarchar(max) = N'CREATE LOGIN ' + QUOTENAME(@login_name) + N' FROM WINDOWS'
         + CASE WHEN @default_database <> N'' THEN N' WITH DEFAULT_DATABASE = ' + QUOTENAME(@default_database) ELSE N'' END;

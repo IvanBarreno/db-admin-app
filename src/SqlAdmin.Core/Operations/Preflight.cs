@@ -47,13 +47,16 @@ public static class PreflightRunner
         IServerConnectionFactory connections,
         CancellationToken ct)
     {
-        if (operation.Checks.Count == 0) return [];
+        // Nothing to ask the server: no YAML checks and no protected login/user in the parameters.
+        var needsProtectionCheck = !operation.ReadOnly && ProtectedPrincipals.TargetsOf(operation, values).Count > 0;
+        if (operation.Checks.Count == 0 && !needsProtectionCheck) return [];
 
         // Database-scope operations are checked inside the chosen database; everything else at server level.
         var target = operation.Scope == OperationScope.Database ? database : null;
         await using var conn = await connections.OpenAsync(serverName, target, ct);
 
-        var results = new List<CheckResult>();
+        // The app's own login (and the configured ones) are view-only for every operation that changes things.
+        var results = new List<CheckResult>(await ProtectedPrincipals.CheckAsync(operation, values, conn, ct));
         foreach (var check in operation.Checks)
         {
             results.Add(await RunOneAsync(operation, check, values, conn, ct));

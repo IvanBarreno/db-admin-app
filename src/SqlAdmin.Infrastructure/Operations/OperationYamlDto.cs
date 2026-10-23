@@ -10,6 +10,26 @@ namespace SqlAdmin.Infrastructure.Operations;
 public sealed class OperationFileDto
 {
     public List<OperationYamlDto> Operations { get; set; } = [];
+
+    /// <summary>Shared help text (see <see cref="GlossaryYamlDto"/>); any file may contribute entries.</summary>
+    public GlossaryYamlDto? Glossary { get; set; }
+}
+
+/// <summary>
+/// Help text written once and reused: operation descriptions by id, parameter label/help by parameter name, and what
+/// each choice value means. An operation or parameter can still override any of it in its own YAML.
+/// </summary>
+public sealed class GlossaryYamlDto
+{
+    public Dictionary<string, string> Operations { get; set; } = [];
+    public Dictionary<string, GlossaryParameterYamlDto> Parameters { get; set; } = [];
+    public Dictionary<string, string> Choices { get; set; } = [];
+}
+
+public sealed class GlossaryParameterYamlDto
+{
+    public string? Label { get; set; }
+    public string? Help { get; set; }
 }
 
 public sealed class OperationYamlDto
@@ -20,6 +40,10 @@ public sealed class OperationYamlDto
     public string Scope { get; set; } = "";
     public List<string> Engines { get; set; } = [];
     public bool Destructive { get; set; }
+    public string? Description { get; set; }
+
+    /// <summary>Only reads (audits, the snapshot): may look at protected logins. Operations in the "audit" category are always read-only.</summary>
+    public bool ReadOnly { get; set; }
     public bool SaveSnapshot { get; set; }
     public DestructiveWhenYamlDto? DestructiveWhen { get; set; }
     public List<OperationParameterYamlDto> Params { get; set; } = [];
@@ -52,6 +76,14 @@ public sealed class OperationParameterYamlDto
     public string? ChecklistGroup { get; set; }
     public string? ChecklistAction { get; set; }
     public ParameterSuggestionYamlDto? Suggest { get; set; }
+    public string? Label { get; set; }
+    public string? Help { get; set; }
+    public Dictionary<string, string>? ChoiceHelp { get; set; }
+
+    /// <summary><c>protect: false</c> on a login that only RECEIVES something (a new owner): a protected login is allowed there.</summary>
+    public bool Protect { get; set; } = true;
+    public bool Advanced { get; set; }
+    public string? PrefixLookup { get; set; }
 }
 
 /// <summary><c>suggest: { lookup, column, depends_on: [...], map: { "true": ENABLE } }</c></summary>

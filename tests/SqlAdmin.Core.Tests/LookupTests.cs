@@ -87,7 +87,7 @@ public sealed class LookupTests : IDisposable
         Write(sqlOverride ?? LoginsYaml);
         var lookup = new LookupRegistry(_dir).Find("logins", "sqlserver")!;
         var args = new Dictionary<string, string?> { ["only"] = only };
-        return await LookupRunner.RunAsync(lookup, _db, new TestDialect(), args, 30, CancellationToken.None);
+        return await LookupRunner.RunAsync(lookup, _db, new TestEngine(), args, 30, CancellationToken.None);
     }
 
     [Fact]

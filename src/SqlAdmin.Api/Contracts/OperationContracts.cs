@@ -9,10 +9,13 @@ public sealed record OperationSummary(
     string Category,
     OperationScope Scope,
     bool Destructive,
-    IReadOnlyList<OperationParameter> Params)
+    IReadOnlyList<OperationParameter> Params,
+    // What the operation does, for the text under the picker; ReadOnly operations may look at protected logins.
+    string? Description = null,
+    bool ReadOnly = false)
 {
     public static OperationSummary From(OperationDefinition op) => new(
-        op.Id, op.Name, op.Category, op.Scope, op.Destructive, op.Params);
+        op.Id, op.Name, op.Category, op.Scope, op.Destructive, op.Params, op.Description, op.ReadOnly);
 }
 
 /// <summary>POST /api/operations/{id}/preview and /execute — parameter values keyed by name, as typed in the form.</summary>

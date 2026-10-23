@@ -18,6 +18,9 @@ public sealed class LookupYamlDto
     public List<string> Engines { get; set; } = [];
     public List<string> Args { get; set; } = [];
     public string? ConnectTo { get; set; }
+    public string? Principal { get; set; }
+    public string? Requires { get; set; }
+    public string? EmptyText { get; set; }
     public string Sql { get; set; } = "";
 }
 
@@ -66,8 +69,14 @@ public static class YamlLookupLoader
         if (!Enum.TryParse<LookupScope>(dto.Scope, ignoreCase: true, out var scope))
             throw new LookupYamlException(file, $"lookup '{dto.Id}': 'scope' must be server or database — got '{dto.Scope}'.");
 
+        if (dto.Principal is not null and not ("login" or "user"))
+            throw new LookupYamlException(file, $"lookup '{dto.Id}': 'principal' must be login or user — got '{dto.Principal}'.");
+
         return new LookupDefinition
         {
+            Principal = dto.Principal,
+            Requires = dto.Requires,
+            EmptyText = dto.EmptyText,
             Id = dto.Id,
             Name = dto.Name,
             Scope = scope,

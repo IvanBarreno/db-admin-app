@@ -27,6 +27,8 @@ export default function OperationsPage() {
   const [database, setDatabase] = useState<string>('')
   const [operationId, setOperationId] = useState<string | null>(null)
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
+  // Why a required field cannot be filled in right now (empty list on the server, no permission...): keeps Preview / Execute off.
+  const [cannotFill, setCannotFill] = useState<string[]>([])
 
   const databases = useDatabases(serverName)
   const operations = useOperations(serverName)
@@ -161,13 +163,15 @@ export default function OperationsPage() {
             >
               <option value="">Select an operation…</option>
               {operations.data.map((op) => (
-                <option key={op.id} value={op.id}>
+                <option key={op.id} value={op.id} title={op.description ?? undefined}>
                   [{op.category}] {op.name}
                   {op.destructive ? ' ⚠' : ''}
                 </option>
               ))}
             </select>
           )}
+          {/* What the chosen operation does, in plain words (the option tooltips are not shown everywhere). */}
+          {operation?.description && <span className="mt-1 block max-w-2xl text-xs text-slate-500">{operation.description}</span>}
         </label>
       )}
 
@@ -179,13 +183,15 @@ export default function OperationsPage() {
             onChange={changeParams}
             serverName={serverName}
             database={database}
+            allowProtected={operation.readOnly}
+            onBlockedChange={setCannotFill}
           />
 
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={runPreview}
-              disabled={preview.isPending}
+              disabled={preview.isPending || cannotFill.length > 0}
               className="rounded border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
               {preview.isPending ? 'Rendering…' : 'Preview'}
@@ -193,7 +199,7 @@ export default function OperationsPage() {
             <button
               type="button"
               onClick={runExecute}
-              disabled={execute.isPending || preview.isPending || !confirmReady || blocked}
+              disabled={execute.isPending || preview.isPending || !confirmReady || blocked || cannotFill.length > 0}
               className={`rounded px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
                 pendingConfirm ? 'bg-red-700 hover:bg-red-600' : 'bg-slate-800 hover:bg-slate-700'
               }`}
@@ -205,6 +211,7 @@ export default function OperationsPage() {
             {execute.isError && <span className="text-sm text-red-700">{execute.error.message}</span>}
             {execute.data && <span className="text-sm text-slate-500">{execute.data.elapsedMs} ms</span>}
           </div>
+          {cannotFill.length > 0 && <p className="text-sm text-amber-700">Cannot run yet: {cannotFill[0]}</p>}
 
           {preview.isError && <p className="text-sm text-red-700">{preview.error.message}</p>}
           {/* Dry run: the real final statements. The template (with @placeholders) stays one click away. */}

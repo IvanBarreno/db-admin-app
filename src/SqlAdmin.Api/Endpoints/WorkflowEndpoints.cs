@@ -181,7 +181,7 @@ public static class WorkflowEndpoints
         {
             await using var conn = await connections.OpenAsync(request.ServerName, lookup.DatabaseToOpen(null), ct);
             return await LookupRunner.RunAsync(
-                lookup, conn.Connection, conn.Engine.Dialect, request.Params, conn.Server.CommandTimeoutSeconds, ct);
+                lookup, conn.Connection, conn.Engine, request.Params, conn.Server.CommandTimeoutSeconds, ct);
         }
         catch (DbException ex)
         {

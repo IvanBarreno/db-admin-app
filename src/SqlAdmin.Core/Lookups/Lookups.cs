@@ -34,6 +34,18 @@ public sealed record LookupDefinition
     public string? DatabaseToOpen(string? callerDatabase) =>
         ConnectTo ?? (Scope == LookupScope.Database ? callerDatabase : null);
 
+    /// <summary>
+    /// What the rows are, so the API can flag protected ones: <c>login</c> (value = login name) or <c>user</c>
+    /// (value = database user; a <c>login_name</c> column maps it to its login). Null = not a principal list.
+    /// </summary>
+    public string? Principal { get; init; }
+
+    /// <summary>What a login needs to read this list (shown when it is denied), e.g. "read access to msdb".</summary>
+    public string? Requires { get; init; }
+
+    /// <summary>Message for an empty list, e.g. "No orphaned users in this database."</summary>
+    public string? EmptyText { get; init; }
+
     /// <summary>Names of extra inputs (bound as <c>@name</c>, NULL when the caller sent none), e.g. <c>login_name</c>.</summary>
     public IReadOnlyList<string> Args { get; init; } = [];
 
@@ -56,10 +68,17 @@ public interface ILookupRegistry
 public sealed record LookupItem(string Value, string Label, IReadOnlyDictionary<string, object?> Extra);
 
 /// <summary>
-/// Rows of a lookup. <paramref name="Warning"/> is set when the catalog could not be read (permission
-/// denied, view missing on this engine): the list is then empty and the UI falls back to free text.
+/// Rows of a lookup. <paramref name="Warning"/> is set when the catalog could not be read; the list is then empty
+/// and the UI disables the field and says why. <paramref name="Reason"/> is a code for the UI:
+/// <c>permission</c> (the login may not read it — <paramref name="Requires"/> says what is needed) or <c>failed</c>.
+/// <paramref name="EmptyText"/> explains an empty (but readable) list.
 /// </summary>
-public sealed record LookupResult(IReadOnlyList<LookupItem> Items, string? Warning = null);
+public sealed record LookupResult(
+    IReadOnlyList<LookupItem> Items,
+    string? Warning = null,
+    string? Reason = null,
+    string? Requires = null,
+    string? EmptyText = null);
 
 /// <summary>Executes a <see cref="LookupDefinition"/> on an open connection.</summary>
 public static class LookupRunner
@@ -67,7 +86,7 @@ public static class LookupRunner
     public static async Task<LookupResult> RunAsync(
         LookupDefinition lookup,
         DbConnection connection,
-        ISqlDialect dialect,
+        IDatabaseEngine engine,
         IReadOnlyDictionary<string, string?> args,
         int commandTimeoutSeconds,
         CancellationToken ct)
@@ -79,7 +98,7 @@ public static class LookupRunner
         foreach (var arg in lookup.Args)
         {
             var p = cmd.CreateParameter();
-            p.ParameterName = dialect.ParameterPrefix + arg;
+            p.ParameterName = engine.Dialect.ParameterPrefix + arg;
             p.Value = args.GetValueOrDefault(arg) is { Length: > 0 } v ? v : DBNull.Value;
             cmd.Parameters.Add(p);
         }
@@ -109,12 +128,15 @@ public static class LookupRunner
                 items.Add(new LookupItem(value, label, extra));
             }
 
-            return new LookupResult(items);
+            return new LookupResult(items, EmptyText: items.Count == 0 ? lookup.EmptyText : null);
         }
         catch (DbException ex)
         {
-            // Typical cause: the login cannot read this catalog view. Degrade, don't fail the page.
-            return new LookupResult([], $"Could not read '{lookup.Name}': {ex.Message}");
+            // Typical cause: the login cannot read this catalog view. Degrade, don't fail the page; the code
+            // tells the UI whether it is a permission problem (and what is needed) or something else.
+            var denied = engine.IsPermissionError(ex);
+            return new LookupResult([], $"Could not read '{lookup.Name}': {ex.Message}",
+                Reason: denied ? "permission" : "failed", Requires: denied ? lookup.Requires : null);
         }
     }
 }

@@ -35,6 +35,8 @@ export default function OffboardingPage() {
   // null = "untouched": show the workflow's default selection.
   const [picked, setPicked] = useState<Set<string> | null>(null)
   const [typedServerName, setTypedServerName] = useState('')
+  // Why a required field cannot be filled in right now: keeps Preview / Run off and says why.
+  const [cannotFill, setCannotFill] = useState<string[]>([])
 
   const preview = usePreviewWorkflow(WORKFLOW_ID)
   const execute = useExecuteWorkflow(WORKFLOW_ID)
@@ -141,6 +143,7 @@ export default function OffboardingPage() {
                 }}
                 serverName={serverName}
                 database=""
+                onBlockedChange={setCannotFill}
               />
 
               <Checklist workflow={workflow} selected={selected} onToggle={toggle} result={execute.data?.steps} />
@@ -157,7 +160,7 @@ export default function OffboardingPage() {
                 <button
                   type="button"
                   onClick={() => preview.mutate(buildRequest())}
-                  disabled={preview.isPending}
+                  disabled={preview.isPending || cannotFill.length > 0}
                   className="rounded border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                   {preview.isPending ? 'Rendering…' : 'Preview all steps'}
@@ -165,7 +168,7 @@ export default function OffboardingPage() {
                 <button
                   type="button"
                   onClick={runExecute}
-                  disabled={execute.isPending || preview.isPending || !confirmReady || blocked}
+                  disabled={execute.isPending || preview.isPending || !confirmReady || blocked || cannotFill.length > 0}
                   className={`rounded px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
                     pendingConfirm ? 'bg-red-700 hover:bg-red-600' : 'bg-slate-800 hover:bg-slate-700'
                   }`}
@@ -178,6 +181,7 @@ export default function OffboardingPage() {
                 {execute.data && <span className="text-sm text-slate-500">{execute.data.elapsedMs} ms</span>}
               </div>
 
+              {cannotFill.length > 0 && <p className="text-sm text-amber-700">Cannot run yet: {cannotFill[0]}</p>}
               {preview.isError && <p className="text-sm text-red-700">{preview.error.message}</p>}
 
               <PreflightPanel checks={checks} />
@@ -317,7 +321,7 @@ function Checklist({
             <label htmlFor={`step-${s.key}`} className={selected.has(s.key) ? '' : 'text-slate-400'}>
               {i + 1}. {s.title}
               {s.destructive && <span className="ml-2 text-xs text-red-700">⚠</span>}
-              {s.needsNewOwner && <span className="ml-2 text-xs text-slate-500">(needs new_owner)</span>}
+              {s.needsNewOwner && <span className="ml-2 text-xs text-slate-500">(needs an owner — see "New owner" above)</span>}
               {s.required && <span className="ml-2 text-xs text-slate-500">(always)</span>}
             </label>
             {outcome && <StatusBadge status={outcome.status} />}

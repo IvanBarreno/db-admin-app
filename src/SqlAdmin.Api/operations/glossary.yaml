@@ -1,0 +1,138 @@
+# operations/glossary.yaml — help text written ONCE and reused (tooltips, labels, the text under a field).
+#
+#   operations:  description of each operation, by id (shown under the operation picker)
+#   parameters:  label + help for a parameter NAME, used by every operation that has such a parameter
+#   choices:     what each choice VALUE does (shown as option tooltips and under the select)
+#
+# An operation or parameter can override any of this in its own YAML (`description:`, `label:`, `help:`,
+# `choice_help:`). A catalog test fails when an operation has no description or a choice has no help.
+
+glossary:
+  operations:
+    # --- audit: read-only ---
+    audit.login_status: "Shows whether a login exists, its type, whether it is disabled, and when it was created."
+    audit.server_roles: "Lists the server roles (sysadmin, dbcreator…) a login belongs to."
+    audit.database_permissions: "Lists the permissions granted or denied to a user in the selected database."
+    audit.server_permissions: "Lists the server-level permissions granted, revoked or denied to a login."
+    audit.sysadmin_members: "Lists everyone who is a member of the sysadmin role — the accounts with full control of the instance."
+    audit.active_sessions: "Shows the open connections of a login: host, program, database and last activity."
+    audit.jobs_owned: "Lists the SQL Agent jobs a login owns. Jobs stop working when their owner is removed."
+    audit.databases_owned: "Lists the databases a login owns. A login that owns a database cannot be dropped."
+    audit.user_mapping: "Shows, in the selected database, which user a login is mapped to."
+    audit.database_roles: "Lists the database roles a user belongs to in the selected database."
+    audit.database_roles_all: "Finds the database roles of a user in every online database (or only the ones you tick)."
+    audit.orphaned_users_all: "Finds users whose login no longer exists (orphans), in every online database."
+    audit.orphaned_users: "Finds users in the selected database whose login no longer exists (orphans)."
+    audit.schema_ownership: "Lists the schemas and objects a user owns; they must be handed over before the user can be dropped."
+    # --- provisioning ---
+    provisioning.create_sql_login: "Creates a SQL Server login with a password. Use Generate… for a strong random password."
+    provisioning.create_windows_login: "Creates a login for a Windows/Active Directory user or group (written DOMAIN\\name)."
+    provisioning.create_user: "Creates a user for an existing login in the selected database."
+    provisioning.user_all_databases: "Creates (or re-maps) a user for a login in every online database and adds it to the chosen roles. Tick databases to limit it."
+    provisioning.grant_bundle: "Gives a user a ready-made set of permissions in the selected database: read only, read/write, execute or developer."
+    provisioning.create_login_for_orphan: "Creates the missing login for an orphaned user, keeping the user's SID so it is mapped again without changing the database."
+    # --- changes ---
+    changes.reset_password: "Sets a new password for a SQL login, optionally unlocking it."
+    changes.set_login_enabled: "Enables or disables one login. A disabled login cannot connect but keeps its permissions."
+    changes.set_logins_enabled: "Enables or disables several logins at once."
+    changes.server_roles: "Shows a login's server roles as a checklist: tick to add a role, untick to remove it. Only removals ask for confirmation."
+    changes.server_permission: "Grants, revokes or denies server-level permissions to a login. The list of permissions comes from the server."
+    changes.rename_user: "Renames a user in the selected database (the login is not touched)."
+    changes.database_roles: "Shows a user's database roles as a checklist: tick to add a role, untick to remove it. Only removals ask for confirmation."
+    changes.fix_orphaned_user: "Maps an orphaned user to a login with a different name."
+    changes.fix_orphaned_users: "Maps several orphaned users to the login with the same name."
+    changes.drop_orphaned_users: "Drops orphaned users from the selected database (their schemas are handed to dbo first)."
+    changes.set_jobs_enabled: "Enables or disables SQL Agent jobs."
+    # --- offboarding steps ---
+    offboarding.snapshot: "Records everything a login holds (roles, permissions, owned databases and jobs, sessions) and saves it to a file — your way back."
+    offboarding.kill_sessions: "Closes the open connections of a login, all of them or only the ones you tick."
+    offboarding.reassign_jobs: "Hands the login's SQL Agent jobs to another login, all of them or only the ones you tick."
+    offboarding.reassign_databases: "Hands the databases the login owns to another login."
+    offboarding.revoke_server_access: "Removes the login from server roles and revokes its server-level permissions."
+    offboarding.drop_users: "Drops the login's user in every online database (their schemas are handed to dbo first)."
+    offboarding.drop_login: "Drops the login. It re-checks that no sessions, databases or jobs remain."
+
+  parameters:
+    login_name:
+      label: "Login"
+      help: "The server login this operation acts on."
+    user_name:
+      label: "User"
+      help: "The database user this operation acts on (users live inside one database: pick the database first)."
+    new_name:
+      label: "New name"
+      help: "The new name for the user. It must not already exist in the database."
+    new_owner:
+      label: "New owner"
+      help: "The login that will take over what the leaving login owned."
+    password:
+      label: "Password"
+      help: "Leave empty to have one generated when you run it (shown once), or use Generate… to choose its length and characters first."
+    unlock:
+      label: "Unlock the login"
+      help: "Also clears a lockout caused by too many failed sign-ins."
+    check_policy:
+      label: "Enforce password policy"
+      help: "Applies the Windows password policy (complexity, expiration) to this SQL login."
+    default_database:
+      label: "Default database"
+      help: "The database the login lands in when it connects. Optional."
+    default_schema:
+      label: "Default schema"
+      help: "The schema used for objects the user creates or references without a schema name."
+    bundle:
+      label: "Permission bundle"
+      help: "A ready-made group of permissions; see each option for what it includes."
+    add_datareader:
+      label: "Read data (db_datareader)"
+      help: "Adds the user to db_datareader: it can read every table and view."
+    add_datawriter:
+      label: "Write data (db_datawriter)"
+      help: "Adds the user to db_datawriter: it can insert, update and delete in every table."
+    grant_execute:
+      label: "Execute procedures"
+      help: "Grants EXECUTE: the user can run every stored procedure and function in the database."
+    action:
+      label: "Action"
+      help: "What to do. See each option for its effect."
+    roles_to_add:
+      label: "Roles to add"
+      help: "Roles the principal will be added to."
+    roles_to_drop:
+      label: "Roles to remove"
+      help: "Roles the principal will be removed from. Removing access asks for confirmation."
+    permissions:
+      label: "Permissions"
+      help: "The permissions to change, taken from the server's own list."
+    logins:
+      label: "Logins"
+      help: "The logins to change."
+    users:
+      label: "Users"
+      help: "The users to change, taken from the selected database."
+    jobs:
+      label: "Jobs"
+      help: "SQL Agent jobs. Ticked by default: untick the ones that must be left alone."
+    sessions:
+      label: "Sessions to close"
+      help: "Open connections of the login. Ticked by default: untick the ones that must stay open."
+    owned_databases:
+      label: "Databases to hand over"
+      help: "Databases the login owns. Ticked by default: untick the ones that must keep their owner."
+    databases:
+      label: "Limit to databases"
+      help: "Only these databases are visited. Ticked by default (all online databases): untick the ones to skip."
+    stop_on_error:
+      label: "Stop at the first error"
+      help: "When one item fails, the remaining items are skipped (not attempted). Untick to try every item and report each result."
+
+  choices:
+    ENABLE: "Lets the login connect again."
+    DISABLE: "Blocks the login from connecting. Its permissions are kept, so it can be enabled again."
+    GRANT: "Gives the permission."
+    REVOKE: "Removes a previous grant or deny; the permission is simply no longer set."
+    DENY: "Explicitly forbids the permission; a deny wins over any grant."
+    read_only: "Read every table and view (db_datareader)."
+    read_write: "Read and change data in every table (db_datareader + db_datawriter)."
+    execute: "Run stored procedures and functions (EXECUTE)."
+    developer: "Developer rights: view definitions, execute, create procedures, and alter the dbo schema."

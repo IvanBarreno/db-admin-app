@@ -400,11 +400,23 @@ export interface components {
             items: components["schemas"]["LookupItem"][];
             /** @default null */
             warning: string | null;
+            /** @default null */
+            reason: string | null;
+            /** @default null */
+            requires: string | null;
+            /** @default null */
+            emptyText: string | null;
         };
         LookupResult2: {
             items: components["schemas"]["LookupItem"][];
             /** @default null */
             warning: string | null;
+            /** @default null */
+            reason: string | null;
+            /** @default null */
+            requires: string | null;
+            /** @default null */
+            emptyText: string | null;
         } | null;
         OperationExecuteResult: {
             success: boolean;
@@ -439,6 +451,14 @@ export interface components {
             checklistGroup?: string | null;
             checklistAction?: string | null;
             suggest?: components["schemas"]["ParameterSuggestion"];
+            label?: string | null;
+            help?: string | null;
+            choiceHelp?: {
+                [key: string]: string;
+            } | null;
+            protect?: boolean;
+            advanced?: boolean;
+            prefixLookup?: string | null;
             effectiveSource?: string | null;
         };
         /** @enum {unknown} */
@@ -477,6 +497,10 @@ export interface components {
             scope: components["schemas"]["OperationScope"];
             destructive: boolean;
             params: components["schemas"]["OperationParameter"][];
+            /** @default null */
+            description: string | null;
+            /** @default false */
+            readOnly: boolean;
         };
         ParameterSuggestion: {
             lookup: string;

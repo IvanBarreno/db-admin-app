@@ -56,6 +56,9 @@ public sealed class ServerItem
     /// validator instead of bound directly, so a bad value is a collected error, not a binder crash.</summary>
     public string? Environment { get; set; }
     public List<string> Tags { get; set; } = [];
+
+    /// <summary>Logins this app must never modify on this server (view only), in addition to the login it connects with, e.g. "sa".</summary>
+    public List<string> ProtectedLogins { get; set; } = [];
     public bool? Encrypt { get; set; }
     public bool? TrustServerCertificate { get; set; }
     public int? CommandTimeoutSeconds { get; set; }

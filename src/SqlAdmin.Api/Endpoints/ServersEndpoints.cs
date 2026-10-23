@@ -5,6 +5,7 @@ using SqlAdmin.Api.Contracts;
 using SqlAdmin.Core.Config;
 using SqlAdmin.Core.Engines;
 using SqlAdmin.Core.Lookups;
+using SqlAdmin.Core.Operations;
 
 namespace SqlAdmin.Api.Endpoints;
 
@@ -112,7 +113,10 @@ public static class ServersEndpoints
 
                 await using var conn = await connections.OpenAsync(name, lookup.DatabaseToOpen(database), ct);
                 var result = await LookupRunner.RunAsync(
-                    lookup, conn.Connection, conn.Engine.Dialect, query, server.CommandTimeoutSeconds, ct);
+                    lookup, conn.Connection, conn.Engine, query, server.CommandTimeoutSeconds, ct);
+
+                // Principal lists (logins, users) flag the rows that are view-only: the app's own login etc.
+                result = await ProtectedPrincipals.AnnotateAsync(lookup, result, conn, ct);
                 return TypedResults.Ok(result);
             })
             .WithName("RunLookup")

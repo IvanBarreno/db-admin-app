@@ -38,6 +38,15 @@ public interface IDatabaseEngine
     /// <summary>User databases available for pickers (system databases excluded).</summary>
     Task<IReadOnlyList<DatabaseInfo>> ListDatabasesAsync(DbConnection connection, CancellationToken ct);
 
+    /// <summary>The login this connection authenticated as (<c>ORIGINAL_LOGIN()</c>): the account the app works with.</summary>
+    Task<string?> GetConnectedLoginAsync(DbConnection connection, CancellationToken ct);
+
+    /// <summary>The server login a database user is mapped to (by SID) in the connection's database; null for none / contained users.</summary>
+    Task<string?> GetUserLoginAsync(DbConnection connection, string userName, CancellationToken ct);
+
+    /// <summary>True when the provider's error means "this login may not read/do that" (as opposed to a bug or a network problem).</summary>
+    bool IsPermissionError(DbException error);
+
     /// <summary>
     /// Subscribes to the provider's "informational message" event (T-SQL PRINT / RAISERROR
     /// severity &lt;= 10 on <c>SqlConnection.InfoMessage</c>) and appends each message to

@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import type { OperationParameter } from '../api/operations'
-import { useLookup } from '../api/lookups'
 import { encodeList, parseList } from './lookupText'
+import { useLookupState } from './lookupState'
 
 /**
  * Roles of one principal as a single checklist. The ticks start from the server's own membership
  * (the lookup's `is_member` column); the form sends only the DIFFERENCE, in two list parameters
  * (`add` and `drop`). So unticking a role the login has means "drop it", ticking one it lacks means
  * "add it", and leaving a role alone sends nothing — only drops need the destructive confirmation.
+ * Each role shows what it allows (the server-side description) as muted text and a tooltip.
  */
 export function RoleChecklist({
   addParam,
@@ -29,12 +30,10 @@ export function RoleChecklist({
 
   const args: Record<string, string> = {}
   for (const name of addParam.dependsOn ?? []) args[name] = values[name] ?? ''
-  const principalChosen = Object.values(args).every((v) => v !== '')
 
-  const query = useLookup(serverName, addParam.effectiveSource ?? null, { database, args })
-  const items = query.data?.items ?? []
-  const warning = query.data?.warning ?? null
-  const usable = query.isSuccess && !warning && principalChosen
+  const state = useLookupState(serverName, addParam.effectiveSource ?? null, { database, args })
+  const items = state.items
+  const usable = state.status === 'ready'
 
   const adds = new Set(parseList(values[addParam.name]))
   const drops = new Set(parseList(values[dropParam.name]))
@@ -68,13 +67,12 @@ export function RoleChecklist({
           .filter(Boolean)
           .join(' · ')
 
-  const needsDatabase = query.isError && !database
-  const loading = query.isPending && query.fetchStatus !== 'idle'
-
   return (
     <div className="rounded border border-slate-200 text-sm">
       <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-3 py-1.5">
-        <span className="font-medium text-slate-700">roles</span>
+        <span className="font-medium text-slate-700" title="Tick a role to add the principal to it, untick one it has to remove it.">
+          roles
+        </span>
         {usable && (
           <span className={`text-xs ${adds.size + drops.size > 0 ? 'font-medium text-slate-900' : 'text-slate-500'}`}>{summary}</span>
         )}
@@ -90,11 +88,17 @@ export function RoleChecklist({
       </div>
 
       <div className="max-h-60 overflow-y-auto px-3 py-1.5">
-        {!principalChosen && <p className="text-slate-500">Choose the {(addParam.dependsOn ?? ['principal'])[0]} first: its current roles are ticked.</p>}
-        {principalChosen && needsDatabase && <p className="text-slate-500">Select a database first.</p>}
-        {principalChosen && loading && <p className="text-slate-500">Loading roles…</p>}
-        {principalChosen && !usable && !needsDatabase && !loading && (
-          <p className="text-xs text-amber-700">{warning ?? 'Could not load the roles'}.</p>
+        {state.status === 'loading' && <p className="text-slate-500">Loading roles…</p>}
+
+        {(state.status === 'idle' || state.status === 'waiting' || state.status === 'empty' || state.status === 'unavailable') && (
+          <p className={state.status === 'unavailable' ? 'text-amber-700' : 'text-slate-500'}>
+            {state.status === 'waiting' ? `${state.reason} Its current roles will be ticked.` : state.reason}
+            {state.retryable && (
+              <button type="button" onClick={state.retry} className="ml-2 underline">
+                Retry
+              </button>
+            )}
+          </p>
         )}
 
         {usable &&
@@ -103,8 +107,9 @@ export function RoleChecklist({
             const member = isMember(extra)
             const ticked = isTicked(item)
             const change = member && !ticked ? 'drop' : !member && ticked ? 'add' : null
+            const description = typeof extra.description === 'string' ? extra.description : null
             return (
-              <label key={item.value} className="flex items-center gap-2 py-0.5">
+              <label key={item.value} className="flex flex-wrap items-center gap-x-2 py-0.5" title={description ?? undefined}>
                 <input type="checkbox" checked={ticked} onChange={() => toggle(item)} />
                 <span className={`font-mono text-xs ${change === 'drop' ? 'text-red-700 line-through' : 'text-slate-800'}`}>{item.value}</span>
                 {extra.is_high_risk === true && <span className="text-xs font-medium text-amber-700">⚠ high risk</span>}
@@ -112,6 +117,7 @@ export function RoleChecklist({
                 {change === 'add' && <span className="text-xs font-medium text-emerald-700">will add</span>}
                 {change === 'drop' && <span className="text-xs font-medium text-red-700">will drop</span>}
                 {change === null && member && <span className="text-xs text-slate-400">member</span>}
+                {description && <span className="text-xs text-slate-500">— {description}</span>}
               </label>
             )
           })}

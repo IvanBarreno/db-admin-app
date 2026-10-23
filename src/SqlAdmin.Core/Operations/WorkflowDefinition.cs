@@ -51,30 +51,48 @@ public static class Workflows
         "Offboard a login",
         "Removes a person's access in the safe order. Pick which steps to run; a failed step stops the rest, so you can fix the cause and run the remaining ones again.",
         [
-            new OperationParameter { Name = "login_name", Type = OperationParameterType.Login },
-            new OperationParameter { Name = "new_owner", Type = OperationParameterType.Login, Required = false, MustExist = true },
-            // Optional: a different owner for the SQL Agent jobs than for the databases.
-            new OperationParameter { Name = "jobs_new_owner", Type = OperationParameterType.Login, Required = false, MustExist = true },
+            new OperationParameter
+            {
+                Name = "login_name", Type = OperationParameterType.Login, Label = "Login to offboard",
+                Help = "The login that is leaving. Its sessions, jobs, databases, roles, users and finally the login itself are handled by the steps below.",
+            },
+            // Protect = false on both owners: they only RECEIVE what the leaver owned, so even a protected login may be chosen.
+            new OperationParameter
+            {
+                Name = "new_owner", Type = OperationParameterType.Login, Required = false, MustExist = true, Protect = false,
+                Label = "New owner (default)",
+                Help = "Takes over the databases the leaving login owns and, unless you choose another owner below, its SQL Agent jobs too. Required when either step is ticked.",
+            },
+            new OperationParameter
+            {
+                Name = "jobs_new_owner", Type = OperationParameterType.Login, Required = false, MustExist = true, Protect = false, Advanced = true,
+                Label = "Different owner for the SQL Agent jobs (optional)",
+                Help = "Leave empty to give the jobs to the default owner above. Fill it only when the jobs must go to a different login than the databases.",
+            },
             // Which things each step touches. Ticked by default; unticking narrows the step (see MultiValues.NoneSentinel).
             new OperationParameter
             {
                 Name = "sessions", Type = OperationParameterType.String, Required = false, Source = "sessions",
-                DependsOn = ["login_name"], Multi = true, DefaultAll = true,
+                DependsOn = ["login_name"], Multi = true, DefaultAll = true, Advanced = true,
+                Label = "Sessions to close", Help = "Open connections of the login. Ticked by default: untick the ones that must stay open.",
             },
             new OperationParameter
             {
                 Name = "jobs", Type = OperationParameterType.String, Required = false, Source = "jobs",
-                DependsOn = ["login_name"], Multi = true, DefaultAll = true, MustExist = true,
+                DependsOn = ["login_name"], Multi = true, DefaultAll = true, MustExist = true, Advanced = true,
+                Label = "Jobs to hand over", Help = "SQL Agent jobs the login owns. Ticked by default: untick the ones that must keep their owner.",
             },
             new OperationParameter
             {
                 Name = "owned_databases", Type = OperationParameterType.String, Required = false, Source = "databases_owned",
-                DependsOn = ["login_name"], Multi = true, DefaultAll = true, MustExist = true,
+                DependsOn = ["login_name"], Multi = true, DefaultAll = true, MustExist = true, Advanced = true,
+                Label = "Databases to hand over", Help = "Databases the login owns. Ticked by default: untick the ones that must keep their owner.",
             },
             new OperationParameter
             {
                 Name = "databases", Type = OperationParameterType.String, Required = false, Source = "databases",
-                Multi = true, DefaultAll = true, MustExist = true,
+                Multi = true, DefaultAll = true, MustExist = true, Advanced = true,
+                Label = "Drop the user in these databases", Help = "Databases where the login's user is dropped. Ticked by default (all online databases): untick the ones to skip.",
             },
         ],
         [
@@ -82,9 +100,9 @@ public static class Workflows
             new("disable", "Disable the login", "changes.set_login_enabled",
                 FixedValues: new Dictionary<string, string> { ["action"] = "DISABLE" }),
             new("kill_sessions", "Kill active sessions", "offboarding.kill_sessions"),
-            new("reassign_jobs", "Reassign SQL Agent jobs to the new owner", "offboarding.reassign_jobs", NeedsNewOwner: true,
+            new("reassign_jobs", "Reassign SQL Agent jobs to the new owner (or to the jobs owner, if you set one)", "offboarding.reassign_jobs", NeedsNewOwner: true,
                 ParamMap: new Dictionary<string, string> { ["new_owner"] = "jobs_new_owner" }),
-            new("reassign_databases", "Reassign owned databases to the new owner", "offboarding.reassign_databases", NeedsNewOwner: true),
+            new("reassign_databases", "Reassign owned databases to the new owner (default owner)", "offboarding.reassign_databases", NeedsNewOwner: true),
             new("revoke_access", "Remove server roles and revoke server permissions", "offboarding.revoke_server_access"),
             new("drop_users", "Drop the user in every online database", "offboarding.drop_users"),
             new("drop_login", "Drop the login", "offboarding.drop_login"),

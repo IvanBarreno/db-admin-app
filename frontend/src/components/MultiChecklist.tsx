@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { OperationParameter } from '../api/operations'
-import { useLookup } from '../api/lookups'
 import { NONE, encodeList, lookupHint, parseList } from './lookupText'
+import { useLookupState, type BlockReporter } from './lookupState'
 
 /**
  * A list parameter shown as a checklist fed by a server-side lookup (sessions, jobs, databases, logins...).
@@ -10,7 +10,9 @@ import { NONE, encodeList, lookupHint, parseList } from './lookupText'
  * should be left alone. Unticking everything is sent as "(none)", never as an empty list, so "nothing"
  * can never be read as "all". Other lists start empty.
  *
- * If the lookup cannot be read (no permission, Azure...), the field falls back to names separated by commas.
+ * A list that cannot be loaded is not offered: the box says why (nothing exists, no permission, not available
+ * for this engine, choose something first). A REQUIRED list in that state also blocks the form.
+ * Protected logins (the account the app connects with) are shown locked, unless the operation only reads.
  */
 export function MultiChecklist({
   param,
@@ -19,6 +21,8 @@ export function MultiChecklist({
   serverName,
   database,
   values,
+  allowProtected,
+  onBlock,
 }: {
   param: OperationParameter
   value: string
@@ -26,18 +30,33 @@ export function MultiChecklist({
   serverName: string | null
   database: string
   values: Record<string, string>
+  /** True for read-only operations (audits), which may look at protected logins. */
+  allowProtected: boolean
+  onBlock?: BlockReporter
 }) {
   const [filter, setFilter] = useState('')
 
   const args: Record<string, string> = {}
   for (const name of param.dependsOn ?? []) args[name] = values[name] ?? ''
 
-  const query = useLookup(serverName, param.effectiveSource ?? null, { database, args })
-  const items = query.data?.items ?? []
-  const warning = query.data?.warning ?? null
-  const usable = query.isSuccess && !warning
+  const state = useLookupState(serverName, param.effectiveSource ?? null, { database, args })
+  const items = state.items
+  const usable = state.status === 'ready'
 
-  const allValues = items.map((i) => i.value)
+  const lockedBy = (extra: unknown): string | undefined => {
+    const e = extra as Record<string, unknown>
+    return !allowProtected && param.protect !== false && e.is_protected === true ? String(e.protected_reason ?? 'protected') : undefined
+  }
+  const selectable = items.filter((i) => !lockedBy(i.extra))
+
+  // Tell the form when a REQUIRED list has nothing to choose from.
+  const blocking = param.required && state.status !== 'ready' && state.status !== 'loading' ? (state.reason ?? 'Nothing to choose from.') : null
+  useEffect(() => {
+    onBlock?.(param.name, blocking)
+    return () => onBlock?.(param.name, null)
+  }, [onBlock, param.name, blocking])
+
+  const allValues = selectable.map((i) => i.value)
   const explicit = parseList(value)
   const selected = new Set(param.defaultAll && value === '' ? allValues : explicit)
 
@@ -60,21 +79,19 @@ export function MultiChecklist({
   }
 
   const shown = items.filter((i) => `${i.value} ${lookupHint(i)}`.toLowerCase().includes(filter.toLowerCase()))
-  const needsDatabase = query.isError && !database
-  const loading = query.isPending && query.fetchStatus !== 'idle'
   const count = [...selected].filter((v) => allValues.includes(v)).length
 
   return (
-    <div className="rounded border border-slate-200 text-sm">
+    <div className="rounded border border-slate-200 text-sm" title={param.help ?? undefined}>
       <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-3 py-1.5">
         <span className="font-medium text-slate-700">
-          {param.name}
+          {param.label ?? param.name.replaceAll('_', ' ')}
           {param.required && <span className="text-red-600"> *</span>}
         </span>
         {usable && (
           <>
             <span className="text-xs text-slate-500">
-              {count} of {items.length} selected
+              {count} of {selectable.length} selected
               {param.defaultAll && value === '' && ' (all)'}
             </span>
             <button type="button" onClick={() => commit(new Set(allValues))} className="text-xs text-slate-600 underline">
@@ -96,40 +113,38 @@ export function MultiChecklist({
         )}
       </div>
 
+      {param.help && <p className="px-3 pt-1 text-xs text-slate-500">{param.help}</p>}
+
       <div className="max-h-52 overflow-y-auto px-3 py-1.5">
-        {needsDatabase && <p className="text-slate-500">Select a database first.</p>}
-        {loading && <p className="text-slate-500">Loading…</p>}
+        {state.status === 'loading' && <p className="text-slate-500">Loading…</p>}
 
-        {usable && items.length === 0 && <p className="text-slate-500">Nothing to list.</p>}
-        {usable &&
-          shown.map((item) => (
-            <label key={item.value} className="flex items-center gap-2 py-0.5">
-              <input type="checkbox" checked={selected.has(item.value)} onChange={() => toggle(item.value)} />
-              <span className="font-mono text-xs text-slate-800">{item.value}</span>
-              <span className="text-xs text-slate-500">{lookupHint(item)}</span>
-            </label>
-          ))}
-
-        {!usable && !needsDatabase && !loading && (
-          <div className="space-y-1">
-            <p className="text-xs text-amber-700">{warning ?? 'List unavailable'} — type names separated by commas.</p>
-            <input
-              type="text"
-              value={explicit.join(', ')}
-              onChange={(e) =>
-                onChange(
-                  encodeList(
-                    e.target.value
-                      .split(',')
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  ),
-                )
-              }
-              className="w-full rounded border border-slate-300 px-2 py-1 font-mono text-xs"
-            />
-          </div>
+        {(state.status === 'idle' || state.status === 'waiting' || state.status === 'empty' || state.status === 'unavailable') && (
+          <p className={state.status === 'unavailable' ? 'text-amber-700' : 'text-slate-500'}>
+            {state.reason}
+            {state.retryable && (
+              <button type="button" onClick={state.retry} className="ml-2 underline">
+                Retry
+              </button>
+            )}
+          </p>
         )}
+
+        {usable &&
+          shown.map((item) => {
+            const lock = lockedBy(item.extra)
+            const description = (item.extra as Record<string, unknown>).description
+            return (
+              <label key={item.value} className={`flex items-center gap-2 py-0.5 ${lock ? 'text-slate-400' : ''}`} title={lock ?? (typeof description === 'string' ? description : undefined)}>
+                <input type="checkbox" checked={!lock && selected.has(item.value)} disabled={lock !== undefined} onChange={() => toggle(item.value)} />
+                <span className="font-mono text-xs text-slate-800">{item.value}</span>
+                {lock ? (
+                  <span className="text-xs">🔒 view only — {lock}</span>
+                ) : (
+                  <span className="text-xs text-slate-500">{lookupHint(item)}</span>
+                )}
+              </label>
+            )
+          })}
       </div>
     </div>
   )

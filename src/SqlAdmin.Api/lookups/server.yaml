@@ -35,6 +35,8 @@ lookups:
     name: "Logins"
     scope: server
     engines: [sqlserver]
+    principal: login
+    empty_text: "This server has no SQL, Windows or external logins."
     sql: |
       -- Skips roles, certificate/key logins and the built-in ##...## / NT SERVICE / NT AUTHORITY principals.
       SELECT name AS value,
@@ -54,6 +56,9 @@ lookups:
     scope: server
     engines: [azuresql]
     connect_to: master
+    principal: login
+    requires: "access to the master database (the server admin, or a member of loginmanager)"
+    empty_text: "No SQL logins in master."
     sql: |
       -- Azure SQL Database: server logins live in master only. Needs a login allowed to read master
       -- (the server admin, or a member of loginmanager); otherwise the picker degrades to free text.
@@ -68,6 +73,7 @@ lookups:
     name: "Databases (details)"
     scope: server
     engines: [sqlserver]
+    requires: "read access to the msdb database (for the last backup)"
     sql: |
       -- For the Explorer: size and last full backup need msdb / master_files, so this is kept apart from the
       -- light "databases" lookup that feeds every picker.
@@ -114,6 +120,7 @@ lookups:
     name: "Linked servers"
     scope: server
     engines: [sqlserver]
+    empty_text: "No linked servers are configured."
     sql: |
       SELECT name AS value,
              product,
@@ -125,10 +132,27 @@ lookups:
       WHERE is_linked = 1
       ORDER BY name;
 
+  - id: windows_domains
+    name: "Windows domains"
+    scope: server
+    engines: [sqlserver]
+    sql: |
+      -- The domain this SQL Server belongs to (WORKGROUP / the machine name when it is not domain-joined) first,
+      -- then every other domain already used by an existing Windows login or group (trusts, other forests).
+      SELECT DEFAULT_DOMAIN() AS value, N'this server''s domain' AS source, 0 AS sort_order
+      UNION ALL
+      SELECT d.domain_name, N'used by existing logins', 1
+      FROM (SELECT DISTINCT LEFT(name, CHARINDEX('\', name) - 1) AS domain_name
+            FROM sys.server_principals
+            WHERE type IN ('U', 'G') AND CHARINDEX('\', name) > 1) d
+      WHERE d.domain_name NOT IN ('NT SERVICE', 'NT AUTHORITY', 'BUILTIN') AND d.domain_name <> DEFAULT_DOMAIN()
+      ORDER BY sort_order, value;
+
   - id: databases_owned
     name: "Databases owned by a login"
     scope: server
     engines: [sqlserver]
+    empty_text: "This login owns no databases."
     args: [login_name]
     sql: |
       -- Offboarding: pick which of the leaver's databases get a new owner.
@@ -176,6 +200,16 @@ lookups:
       -- "public" is left out (everyone is in it); is_high_risk flags roles that grant control of the instance.
       SELECT r.name AS value,
              r.is_fixed_role,
+             CASE r.name
+               WHEN 'sysadmin'      THEN 'Full control of the whole instance.'
+               WHEN 'securityadmin' THEN 'Manages logins and their permissions (can grant itself more).'
+               WHEN 'serveradmin'   THEN 'Changes server-wide settings and can shut the server down.'
+               WHEN 'setupadmin'    THEN 'Adds and removes linked servers.'
+               WHEN 'processadmin'  THEN 'Can end (KILL) sessions running in the instance.'
+               WHEN 'diskadmin'     THEN 'Manages disk files (rarely used).'
+               WHEN 'dbcreator'     THEN 'Creates, alters, drops and restores databases.'
+               WHEN 'bulkadmin'     THEN 'Can run BULK INSERT.'
+             END AS description,
              CASE WHEN r.name IN ('sysadmin', 'securityadmin', 'serveradmin', 'setupadmin') THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS is_high_risk,
              (SELECT COUNT(*) FROM sys.server_role_members x WHERE x.role_principal_id = r.principal_id) AS member_count,
              CASE WHEN @login_name IS NULL THEN NULL
@@ -192,6 +226,8 @@ lookups:
     name: "SQL Agent jobs"
     scope: server
     engines: [sqlserver]
+    requires: "read access to the msdb database (SQLAgentReaderRole, or sysadmin)"
+    empty_text: "There are no SQL Agent jobs (for this login)."
     args: [login_name]
     sql: |
       -- Needs read access to msdb. When login_name is given, only the jobs that login owns.
@@ -240,6 +276,8 @@ lookups:
     name: "Sessions"
     scope: server
     engines: [sqlserver]
+    requires: "the VIEW SERVER STATE permission"
+    empty_text: "No open user sessions (for this login)."
     args: [login_name]
     sql: |
       -- Needs VIEW SERVER STATE. When login_name is given, only that login's user sessions.

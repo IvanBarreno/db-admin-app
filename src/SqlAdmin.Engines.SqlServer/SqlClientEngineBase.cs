@@ -94,6 +94,41 @@ public abstract class SqlClientEngineBase : IDatabaseEngine
         return result;
     }
 
+    public async Task<string?> GetConnectedLoginAsync(DbConnection connection, CancellationToken ct)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT ORIGINAL_LOGIN();";
+        return await cmd.ExecuteScalarAsync(ct) as string;
+    }
+
+    public async Task<string?> GetUserLoginAsync(DbConnection connection, string userName, CancellationToken ct)
+    {
+        // Azure SQL rejects SUSER_SNAME(sid) inside a user database, so look the SID up in master-level views only where they exist.
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = UserLoginSql;
+        var p = cmd.CreateParameter();
+        p.ParameterName = "@u";
+        p.Value = userName;
+        cmd.Parameters.Add(p);
+        try
+        {
+            return await cmd.ExecuteScalarAsync(ct) as string;
+        }
+        catch (SqlException)
+        {
+            return null; // e.g. Azure: no server catalog in a user database; the name itself is still compared
+        }
+    }
+
+    /// <summary>T-SQL that maps a database user (by SID) to its server login name.</summary>
+    protected virtual string UserLoginSql =>
+        "SELECT SUSER_SNAME(sid) FROM sys.database_principals WHERE name = @u AND type IN ('S', 'U', 'G');";
+
+    // 229/230 = permission denied on object/column, 262 = on database, 297/300 = on server, 371/15151 = cannot
+    // see the object, 916 = login cannot use the database.
+    public bool IsPermissionError(DbException error) =>
+        error is SqlException { Number: 229 or 230 or 262 or 297 or 300 or 371 or 916 or 15151 };
+
     public IDisposable SubscribeToMessages(DbConnection connection, List<string> messages)
     {
         var sqlConnection = (SqlConnection)connection;

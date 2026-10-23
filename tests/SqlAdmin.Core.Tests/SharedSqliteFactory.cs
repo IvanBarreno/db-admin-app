@@ -15,7 +15,7 @@ internal sealed class TestDialect : ISqlDialect
     public string? BatchSeparator => "GO";
 }
 
-internal sealed class TestEngine : IDatabaseEngine
+internal sealed class TestEngine(IReadOnlyDictionary<string, string>? userLogins = null) : IDatabaseEngine
 {
     public string Id => "sqlserver";
     public string DisplayName => "Fake";
@@ -25,6 +25,10 @@ internal sealed class TestEngine : IDatabaseEngine
     public Task<ServerInfo> TestAsync(DbConnection c, CancellationToken ct) => throw new NotSupportedException();
     public Task<IReadOnlyList<DatabaseInfo>> ListDatabasesAsync(DbConnection c, CancellationToken ct) => throw new NotSupportedException();
     public IDisposable SubscribeToMessages(DbConnection c, List<string> m) => throw new NotSupportedException();
+    public Task<string?> GetConnectedLoginAsync(DbConnection c, CancellationToken ct) => Task.FromResult<string?>("app_login");
+    public Task<string?> GetUserLoginAsync(DbConnection c, string userName, CancellationToken ct) =>
+        Task.FromResult(userLogins is not null && userLogins.TryGetValue(userName, out var login) ? login : null);
+    public bool IsPermissionError(DbException error) => false;
 }
 
 /// <summary>Hands out the same in-memory database on every call; callers' DisposeAsync does not close it.</summary>
