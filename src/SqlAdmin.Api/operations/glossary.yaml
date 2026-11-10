@@ -43,6 +43,7 @@ glossary:
     changes.fix_orphaned_users: "Maps several orphaned users to the login with the same name."
     changes.drop_orphaned_users: "Drops orphaned users from the selected database (their schemas are handed to dbo first)."
     changes.set_jobs_enabled: "Enables or disables SQL Agent jobs."
+    changes.clone_server_access: "Copies the server roles and server-level permissions of one login to another. Only adds what the target lacks; nothing is removed."
     # --- offboarding steps ---
     offboarding.snapshot: "Records everything a login holds (roles, permissions, owned databases and jobs, sessions) and saves it to a file — your way back."
     offboarding.kill_sessions: "Closes the open connections of a login, all of them or only the ones you tick."
@@ -59,6 +60,18 @@ glossary:
     user_name:
       label: "User"
       help: "The database user this operation acts on (users live inside one database: pick the database first)."
+    source_login:
+      label: "Copy from login"
+      help: "The login whose server roles and permissions are copied. It is only read."
+    target_login:
+      label: "Copy to login"
+      help: "The existing login that receives the access. It keeps what it already has."
+    include_roles:
+      label: "Copy server roles"
+      help: "Adds the target to every server role the source belongs to (sysadmin included, so check the preview)."
+    include_permissions:
+      label: "Copy server permissions"
+      help: "Copies explicit GRANT / GRANT WITH GRANT OPTION / DENY on the server. CONNECT SQL is skipped."
     new_name:
       label: "New name"
       help: "The new name for the user. It must not already exist in the database."

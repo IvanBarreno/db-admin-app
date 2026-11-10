@@ -552,3 +552,89 @@ operations:
       END;
       SELECT item AS job_name, status, message FROM @results;
       IF @dry_run = 0 AND @failed > 0 THROW 50010, N'Some jobs failed: see the table.', 1;
+
+  # Phase 6 "clone permissions", server level. Only ADDS access to the target (roles it lacks, permissions it
+  # lacks); it never removes anything, so it needs no confirm token. The source is only read (protect: false).
+  - id: changes.clone_server_access
+    name: "Clone server access from another login"
+    category: changes
+    scope: server
+    engines: [sqlserver]
+    destructive: false
+    params:
+      - name: source_login
+        type: login
+        required: true
+        must_exist: true
+        protect: false
+      - name: target_login
+        type: login
+        required: true
+        must_exist: true
+      - name: include_roles
+        type: bool
+        required: false
+        default: "true"
+      - name: include_permissions
+        type: bool
+        required: false
+        default: "true"
+      - name: stop_on_error
+        type: bool
+        required: false
+        default: "true"
+    checks:
+      - id: different_logins
+        message: "Source and target are the same login."
+        sql: |
+          SELECT 1 WHERE @source_login = @target_login;
+    sql: |
+      DECLARE @items TABLE (n int IDENTITY(1,1), kind varchar(10), item nvarchar(256), stmt nvarchar(max));
+      IF @include_roles = 1
+        INSERT @items (kind, item, stmt)
+        SELECT 'ROLE', r.name,
+               N'ALTER SERVER ROLE ' + QUOTENAME(r.name) + N' ADD MEMBER ' + QUOTENAME(@target_login) + N';'
+        FROM sys.server_role_members srm
+        JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+        JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+        WHERE m.name = @source_login
+          AND NOT EXISTS (SELECT 1 FROM sys.server_role_members x
+                          JOIN sys.server_principals t ON t.principal_id = x.member_principal_id
+                          WHERE x.role_principal_id = srm.role_principal_id AND t.name = @target_login);
+      -- CONNECT SQL is skipped: a login always needs it and the target already has it when it exists.
+      IF @include_permissions = 1
+        INSERT @items (kind, item, stmt)
+        SELECT 'PERMISSION', p.permission_name,
+               CASE p.state WHEN 'D' THEN N'DENY ' ELSE N'GRANT ' END + p.permission_name
+                 + N' TO ' + QUOTENAME(@target_login)
+                 + CASE WHEN p.state = 'W' THEN N' WITH GRANT OPTION' ELSE N'' END + N';'
+        FROM sys.server_permissions p
+        WHERE p.grantee_principal_id = SUSER_ID(@source_login) AND p.class = 100
+          AND p.permission_name <> 'CONNECT SQL'
+          AND NOT EXISTS (SELECT 1 FROM sys.server_permissions q
+                          WHERE q.grantee_principal_id = SUSER_ID(@target_login) AND q.class = 100
+                            AND q.permission_name = p.permission_name AND q.state = p.state);
+      DECLARE @results TABLE (kind varchar(10), item nvarchar(256), status varchar(7), message nvarchar(4000));
+      DECLARE @n int = 1, @max int = (SELECT COUNT(*) FROM @items), @kind varchar(10), @item nvarchar(256), @sql nvarchar(max), @failed int = 0;
+      WHILE @n <= @max
+      BEGIN
+        SELECT @kind = kind, @item = item, @sql = stmt FROM @items WHERE n = @n;
+        BEGIN TRY
+          {{exec:@sql}};
+          INSERT @results VALUES (@kind, @item, 'OK', NULL);
+        END TRY
+        BEGIN CATCH
+          IF @dry_run = 1 SELECT N'-- ' + @item + N': ' + ERROR_MESSAGE() AS statement;
+          INSERT @results VALUES (@kind, @item, 'ERROR', ERROR_MESSAGE());
+          SET @failed += 1;
+          IF @stop_on_error = 1
+          BEGIN
+            INSERT @results SELECT kind, item, 'SKIPPED', NULL FROM @items WHERE n > @n;
+            BREAK;
+          END;
+        END CATCH;
+        SET @n += 1;
+      END;
+      IF @max = 0 SELECT N'Nothing to copy: the target already has everything the source has.' AS result;
+      ELSE SELECT kind, item AS name, status, message FROM @results;
+      IF @dry_run = 0 AND @failed > 0 THROW 50010, N'Some items failed: see the table.', 1;
