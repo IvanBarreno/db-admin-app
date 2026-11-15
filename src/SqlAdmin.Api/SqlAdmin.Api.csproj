@@ -38,6 +38,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.*" />
     <PackageReference Include="Scalar.AspNetCore" Version="2.17.2" />
+    <!-- UseWindowsService(): lets the same exe be installed as a Windows Service (no-op otherwise) -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.*">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

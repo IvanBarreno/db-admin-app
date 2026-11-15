@@ -23,6 +23,18 @@ export function encodeList(values: readonly string[]): string {
 }
 
 /**
+ * Names typed or pasted into a text box: one per line, commas and semicolons also separate.
+ * Blank entries are dropped and a name written twice is kept once (first position wins).
+ */
+export function splitNames(text: string): string[] {
+  const names = text
+    .split(/[\n\r,;]+/)
+    .map((name) => name.trim())
+    .filter((name) => name !== '')
+  return [...new Set(names)]
+}
+
+/**
  * Why a lookup item cannot be picked, from the parameter's `lock_when` rules (null = pickable). A rule with `ifParam`
  * only applies while that other field has the wanted value. Text comparison: booleans are "true" / "false".
  */
@@ -56,11 +68,6 @@ export function formatCell(value: unknown): string {
   if (typeof value === 'boolean') return value ? '✓' : '–'
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return value.slice(0, 16).replace('T', ' ')
   return String(value)
-}
-
-/** Quotes a value for CSV (RFC 4180): wrap in quotes when it holds a comma, quote or line break. */
-export function csvCell(text: string): string {
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
 /**

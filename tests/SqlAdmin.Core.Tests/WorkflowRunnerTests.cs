@@ -176,7 +176,12 @@ public class WorkflowRunnerTests
     {
         var values = Values();
         values["login_name"] = "app_login";
-        string[] steps = ["disable", "kill_sessions", "reassign_jobs", "reassign_databases", "revoke_server_access", "drop_users", "drop_login"];
+        // Every step whose operation changes something, taken from the shipped workflow so a new step is covered too.
+        var steps = Workflows.Offboarding.Steps
+            .Where(s => !Registry.Find(s.OperationId)!.ReadOnly)
+            .Select(s => s.Key)
+            .ToArray();
+        Assert.Contains("drop_login", steps);
 
         var blocked = await ProtectedResults(steps, values);
 

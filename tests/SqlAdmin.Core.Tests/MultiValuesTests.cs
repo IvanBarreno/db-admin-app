@@ -207,6 +207,40 @@ public sealed class MultiValuesTests : IDisposable
     }
 
     [Fact]
+    public void Typed_list_is_a_multi_parameter_without_a_source()
+    {
+        // The one list that needs no lookup: names the DBA types (logins to create).
+        File.WriteAllText(Path.Combine(_dir, "o.yaml"), """
+            operations:
+              - id: t.typed
+                name: "t"
+                category: t
+                scope: server
+                engines: [sqlserver]
+                params:
+                  - name: names
+                    type: string
+                    multi: true
+                    typed_list: true
+                sql: |
+                  SELECT value FROM OPENJSON(@names);
+            """);
+
+        var param = YamlOperationLoader.LoadFromDirectory(_dir).Single().Params.Single();
+
+        Assert.True(param.Multi);
+        Assert.Null(param.EffectiveSource);
+    }
+
+    [Theory]
+    [InlineData("        typed_list: true")]                                  // not a list
+    [InlineData("        multi: true\n        typed_list: true\n        source: logins")] // a lookup list is ticked, not typed
+    public void Typed_list_only_applies_to_a_multi_parameter_without_a_source(string paramYaml)
+    {
+        Assert.Contains("typed_list", LoadError(paramYaml).Message);
+    }
+
+    [Fact]
     public void Default_all_only_applies_to_multi()
     {
         Assert.Contains("multi", LoadError("        source: x\n        default_all: true").Message);

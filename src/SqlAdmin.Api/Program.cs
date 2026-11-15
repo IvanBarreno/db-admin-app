@@ -10,6 +10,7 @@
 
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Scalar.AspNetCore;
 using SqlAdmin.Api.Endpoints;
 using SqlAdmin.Api.Errors;
@@ -17,7 +18,20 @@ using SqlAdmin.Engines.SqlServer;
 using SqlAdmin.Infrastructure;
 using SqlAdmin.Infrastructure.Audit;
 
+// Running as a Windows Service (see README "Run as a Windows Service")? Windows starts services in
+// C:\Windows\System32, but servers.json, operations/, lookups/ and audit.db are found relative to the
+// current directory, so move to the folder of the exe first. On a normal start this does nothing.
+if (WindowsServiceHelpers.IsWindowsService())
+{
+    Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+}
+
 var builder = WebApplication.CreateBuilder(args);
+
+// Lets the Windows Service Control Manager start and stop the app (reports "running", reacts to "stop").
+// It is a no-op when the app is started normally (double-click, `dotnet run`, macOS, Linux).
+builder.Host.UseWindowsService(options => options.ServiceName = "SqlAdminConsole");
+
 // CreateBuilder already did a lot for us:
 //   - loaded appsettings.json, appsettings.{Environment}.json, user-secrets (Development),
 //     env vars and command-line args — in that order, later sources override earlier ones
@@ -84,6 +98,34 @@ using (var scope = app.Services.CreateScope())
     scope.ServiceProvider.GetRequiredService<AuditDbContext>().Database.Migrate();
 }
 
+// Command mode: `SqlAdmin import-audit <path-to-another-audit.db>` merges another DBA's audit file into
+// this machine's audit.db and exits WITHOUT starting the web server. `args is ["import-audit", ..]` is a
+// C# list pattern: "the first argument is import-audit, followed by anything".
+if (args is ["import-audit", ..])
+{
+    if (args.Length != 2)
+    {
+        Console.Error.WriteLine("Usage: SqlAdmin import-audit <path-to-another-audit.db>");
+        Environment.ExitCode = 2; // non-zero exit code = failure, for scripts that call this
+        return;
+    }
+
+    try
+    {
+        using var scope = app.Services.CreateScope();
+        var result = await AuditImporter.ImportAsync(
+            scope.ServiceProvider.GetRequiredService<AuditDbContext>(), args[1], CancellationToken.None);
+        Console.WriteLine($"Read {result.Read} entries from {args[1]}: {result.Imported} imported, {result.Skipped} already present.");
+    }
+    catch (Exception ex) when (ex is IOException or Microsoft.Data.Sqlite.SqliteException)
+    {
+        // Missing file, not a SQLite database, locked file...: one clear line instead of a stack trace.
+        Console.Error.WriteLine($"Import failed: {ex.Message}");
+        Environment.ExitCode = 1;
+    }
+    return;
+}
+
 // Turns exceptions into ProblemDetails responses instead of a blank 500 or a stack-trace page.
 app.UseExceptionHandler();
 // Also turns "empty" 4xx/5xx responses (e.g. an unmatched route) into ProblemDetails bodies.
@@ -130,3 +172,8 @@ app.UseStaticFiles();
 app.MapFallbackToFile("{*path:nonfile:regex(^(?!api(/|$)).*$)}", "index.html");
 
 app.Run();
+
+// With top-level statements the compiler generates an INTERNAL class called Program. The integration
+// tests start this app in memory with WebApplicationFactory<Program>, which needs to see that class from
+// another assembly. Declaring the other "half" of the partial class as public makes the whole class public.
+public partial class Program;

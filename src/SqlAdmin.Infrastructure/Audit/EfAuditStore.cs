@@ -28,12 +28,21 @@ public sealed class EfAuditStore(AuditDbContext db) : IAuditStore
         if (!string.IsNullOrWhiteSpace(query.Status))
             entries = entries.Where(e => e.Status == query.Status);
 
-        // SQLite can't ORDER BY a DateTimeOffset column; Id is autoincrement and inserted in
-        // execution order, so ordering by it gives the same "newest first" result.
-        return await entries
-            .OrderByDescending(e => e.Id)
+        // "Newest first" must follow the TIME, not the Id: rows merged with `import-audit` get new, higher
+        // Ids although they may be older. SQLite cannot ORDER BY a DateTimeOffset column, so the sort is done
+        // here in two cheap steps: (1) read only Id + time of the matching rows and sort / page them in
+        // memory, (2) load the full rows of that one page. The SQL text never travels for rows off the page.
+        var keys = await entries.Select(e => new { e.Id, e.ExecutedAtUtc }).ToListAsync(ct);
+        var pageIds = keys
+            .OrderByDescending(k => k.ExecutedAtUtc)
+            .ThenByDescending(k => k.Id) // same instant: the later insert first
             .Skip(query.Skip)
             .Take(query.Take)
-            .ToListAsync(ct);
+            .Select(k => k.Id)
+            .ToList();
+
+        var page = await db.AuditLog.AsNoTracking().Where(e => pageIds.Contains(e.Id)).ToListAsync(ct);
+        // The database returns that page in its own order; put it back in the order computed above.
+        return page.OrderBy(e => pageIds.IndexOf(e.Id)).ToList();
     }
 }

@@ -101,6 +101,15 @@ public sealed record OperationParameter
     public string? PrefixLookup { get; init; }
 
     /// <summary>
+    /// Password parameters only (YAML <c>generate_for_each: logins</c>): the name of a LIST parameter of the same
+    /// operation. At execute time the app generates one strong password per item of that list and binds them as a
+    /// JSON object <c>{"item": "password"}</c>, which the script reads with <c>OPENJSON(@name)</c> ([key] / value).
+    /// The DBA never types this value; the form shows a note instead of an input. The script returns each
+    /// password in its result grid (only for the items that succeeded); it is never written to the audit log.
+    /// </summary>
+    public string? GenerateForEach { get; init; }
+
+    /// <summary>
     /// Rules that show some lookup items LOCKED (visible, not pickable) with a reason: Windows logins on a password
     /// reset, logins already in the wanted state, offline databases. UX only — the script and its checks still guard the run.
     /// </summary>

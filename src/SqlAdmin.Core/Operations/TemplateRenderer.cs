@@ -121,10 +121,17 @@ public static class TemplateRenderer
         return new RenderedTemplate(sql, parameters);
     }
 
+    // TryParse instead of Parse: a value typed by a person ("abc" in a number field) must come back as a
+    // 400 "Invalid parameters" naming the field, not as an unhandled FormatException (a generic 500).
     private static object Convert(OperationParameter param, string value) => param.Type switch
     {
-        OperationParameterType.Int => int.Parse(value),
-        OperationParameterType.Bool => bool.Parse(value),
+        OperationParameterType.Int => int.TryParse(value.Trim(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var number)
+            ? number
+            : throw new TemplateRenderException($"Parameter '{param.Name}' must be a whole number."),
+        OperationParameterType.Bool => bool.TryParse(value.Trim(), out var flag)
+            ? flag
+            : throw new TemplateRenderException($"Parameter '{param.Name}' must be true or false."),
         _ => value,
     };
 }

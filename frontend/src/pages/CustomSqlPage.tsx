@@ -99,7 +99,7 @@ export default function CustomSqlPage() {
         )}
       </div>
 
-      {run.data && <ResultsGrid result={run.data} />}
+      {run.data && <ResultsGrid result={run.data} exportName={`${serverName} custom sql`} />}
     </div>
   )
 }

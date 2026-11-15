@@ -7,6 +7,7 @@ import { useLookupState, type BlockReporter } from './lookupState'
 import { MultiChecklist } from './MultiChecklist'
 import { PasswordGeneratorModal } from './PasswordGeneratorModal'
 import { RoleChecklist } from './RoleChecklist'
+import { TypedList } from './TypedList'
 
 /**
  * Renders one input per operation parameter, picking the control by its declared type.
@@ -78,6 +79,15 @@ export function ParamForm({
             serverName={serverName}
             database={database}
           />
+        </div>
+      )
+    }
+
+    // A list with no lookup behind it is typed by the DBA (names of things to create).
+    if (param.multi && !param.effectiveSource) {
+      return (
+        <div key={param.name} className="w-full">
+          <TypedList param={param} value={values[param.name] ?? ''} onChange={(v) => set(param.name, v)} onBlock={report} />
         </div>
       )
     }
@@ -279,6 +289,14 @@ function ParamInput({
       return <ChoiceSelect param={param} value={value} onChange={onChange} className={className} />
 
     case 'Password':
+      // generate_for_each: nothing to type — the app creates one password per ticked item when the run starts.
+      if (param.generateForEach) {
+        return (
+          <p className="rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-600">
+            Generated automatically: a different strong password for each item, shown once in the results.
+          </p>
+        )
+      }
       return <PasswordInput param={param} value={value} onChange={onChange} className={className} />
 
     case 'Int':

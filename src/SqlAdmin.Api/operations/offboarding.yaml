@@ -90,6 +90,19 @@ operations:
         AND (NOT EXISTS (SELECT 1 FROM OPENJSON(@sessions))
              OR CAST(session_id AS nvarchar(10)) IN (SELECT value FROM OPENJSON(@sessions)));
       {{exec:@sql}};
+      -- KILL returns at once, but the session stays in sys.dm_exec_sessions until SQL Server has finished
+      -- cleaning it up (longer when it must roll back work). Wait up to 5 s for the chosen sessions to go,
+      -- so the count below is true and the next offboarding step (drop login) does not find a ghost session.
+      DECLARE @tries int = 0;
+      WHILE @dry_run = 0 AND @tries < 25 AND EXISTS (
+              SELECT 1 FROM sys.dm_exec_sessions
+              WHERE login_name = @login_name AND is_user_process = 1 AND session_id <> @@SPID
+                AND (NOT EXISTS (SELECT 1 FROM OPENJSON(@sessions))
+                     OR CAST(session_id AS nvarchar(10)) IN (SELECT value FROM OPENJSON(@sessions))))
+      BEGIN
+        WAITFOR DELAY '00:00:00.200';
+        SET @tries += 1;
+      END;
       SELECT COUNT(*) AS sessions_remaining
       FROM sys.dm_exec_sessions
       WHERE login_name = @login_name AND is_user_process = 1;

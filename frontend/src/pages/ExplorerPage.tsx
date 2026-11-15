@@ -1,9 +1,13 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router'
+import { LoginDiff } from '../components/LoginDiff'
 import { Combobox } from '../components/Combobox'
 import { lookupHint } from '../components/lookupText'
 import { LookupTable } from '../components/LookupTable'
 import { TargetBar } from '../components/TargetBar'
-import { useLookup } from '../api/lookups'
+import { operationLink, operationsFor } from '../components/useInOperation'
+import { useLookup, type LookupItem } from '../api/lookups'
+import { useOperations } from '../api/operations'
 import { useDatabases, useServers } from '../api/servers'
 
 /** One tab = one lookup shown as a table. `db` tabs need a database; the lookups live in `lookups/*.yaml`. */
@@ -36,6 +40,7 @@ const DATABASE_TABS: Tab[] = [
 ]
 
 const LOGIN_360 = 'login360'
+const COMPARE = 'compare'
 
 /**
  * Read-only discovery: what is on a server, without writing a query. Each tab is a lookup rendered as a
@@ -53,7 +58,35 @@ export default function ExplorerPage() {
   const server = servers.data?.find((s) => s.name === serverName)
 
   const tab = [...SERVER_TABS, ...DATABASE_TABS].find((t) => t.id === tabId)
-  const where = tab?.db ? database || null : tabId === LOGIN_360 ? 'login 360°' : 'server level'
+  const where = tab?.db ? database || null : tabId === LOGIN_360 ? 'login 360°' : tabId === COMPARE ? 'compare logins' : 'server level'
+
+  // "Use in operation": the operations that accept an item of the open table (worked out from the catalog,
+  // see useInOperation.ts). Choosing one opens the Operations page with this row already filled in.
+  const navigate = useNavigate()
+  const operations = useOperations(serverName)
+  const targets = tab ? operationsFor(operations.data ?? [], tab.lookup) : []
+  const rowAction =
+    serverName && targets.length > 0
+      ? (item: LookupItem) => (
+          <select
+            value=""
+            aria-label={`Use ${item.value} in an operation`}
+            onChange={(e) => {
+              const target = targets.find((t) => t.operation.id === e.target.value)
+              if (target) navigate(operationLink(serverName, tab?.db ? database : '', target.operation.id, target.param.name, item.value))
+            }}
+            className="rounded border border-slate-300 px-1 py-0.5 text-xs text-slate-600"
+          >
+            <option value="">Use in…</option>
+            {targets.map((t) => (
+              <option key={t.operation.id} value={t.operation.id} title={t.operation.description ?? undefined}>
+                [{t.operation.category}] {t.operation.name}
+                {t.operation.destructive ? ' ⚠' : ''}
+              </option>
+            ))}
+          </select>
+        )
+      : undefined
 
   return (
     <div className="space-y-4">
@@ -116,16 +149,30 @@ export default function ExplorerPage() {
               <TabButton active={tabId === LOGIN_360} onClick={() => setTabId(LOGIN_360)}>
                 Login 360°
               </TabButton>
+              <TabButton active={tabId === COMPARE} onClick={() => setTabId(COMPARE)}>
+                Compare logins
+              </TabButton>
             </div>
           </nav>
 
           {tabId === LOGIN_360 && <Login360 serverName={serverName} login={login} onLogin={setLogin} />}
+          {/* key: a different server on the left means different logins, so start the comparison again. */}
+          {tabId === COMPARE && <LoginDiff key={serverName} serverName={serverName} />}
 
-          {tab && !tab.db && <LookupTable key={tab.id} serverName={serverName} lookupId={tab.lookup} title={tab.label} />}
+          {tab && !tab.db && (
+            <LookupTable key={tab.id} serverName={serverName} lookupId={tab.lookup} title={tab.label} rowAction={rowAction} />
+          )}
 
           {tab?.db && !database && <p className="text-slate-500">Select a database to list its {tab.label.toLowerCase()}.</p>}
           {tab?.db && database && (
-            <LookupTable key={`${tab.id}-${database}`} serverName={serverName} lookupId={tab.lookup} database={database} title={`${tab.label} in ${database}`} />
+            <LookupTable
+              key={`${tab.id}-${database}`}
+              serverName={serverName}
+              lookupId={tab.lookup}
+              database={database}
+              title={`${tab.label} in ${database}`}
+              rowAction={rowAction}
+            />
           )}
         </>
       )}

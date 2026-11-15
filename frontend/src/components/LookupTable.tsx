@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useLookup, type LookupItem } from '../api/lookups'
-import { csvCell, formatCell } from './lookupText'
+import { downloadCsv, toCsv } from './csv'
+import { formatCell } from './lookupText'
 
 type SortState = { column: string; descending: boolean } | null
 
@@ -22,7 +23,10 @@ export function LookupTable({
   filter,
   title,
   emptyText = 'Nothing to list.',
+  rowAction,
 }: {
+  /** Extra last cell per row (e.g. the Explorer's "Use in operation" menu). Omit it for a plain table. */
+  rowAction?: (item: LookupItem) => React.ReactNode
   serverName: string
   lookupId: string
   /** Database for database-scoped lookups. */
@@ -70,13 +74,8 @@ export function LookupTable({
   }, [items, columns, search, sort])
 
   function exportCsv() {
-    const lines = [columns.map(csvCell).join(','), ...rows.map((item) => columns.map((c) => csvCell(formatCell(cell(item, c)))).join(','))]
-    const url = URL.createObjectURL(new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${lookupId}.csv`
-    link.click()
-    URL.revokeObjectURL(url)
+    // The rows as shown (current search and sort), with the same cell text as the table.
+    downloadCsv(lookupId, toCsv(columns, rows.map((item) => columns.map((c) => formatCell(cell(item, c))))))
   }
 
   function toggleSort(column: string) {
@@ -127,6 +126,7 @@ export function LookupTable({
                     {sort?.column === c && (sort.descending ? ' ▼' : ' ▲')}
                   </th>
                 ))}
+                {rowAction && <th className="px-3 py-1.5" />}
               </tr>
             </thead>
             <tbody>
@@ -137,6 +137,7 @@ export function LookupTable({
                       {formatCell(cell(item, c))}
                     </td>
                   ))}
+                  {rowAction && <td className="whitespace-nowrap px-3 py-1 text-right">{rowAction(item)}</td>}
                 </tr>
               ))}
             </tbody>

@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router'
+import { readOperationLink } from '../components/useInOperation'
 import { AccessComparison } from '../components/AccessComparison'
 import { EnvBadge } from '../components/EnvBadge'
 import { ParamForm } from '../components/ParamForm'
@@ -24,10 +26,14 @@ function statementSummary(statements: readonly { database?: string | null }[] | 
 /** Operation catalog: pick a server, pick an operation, fill its params, preview or run it. */
 export default function OperationsPage() {
   const servers = useServers()
-  const [serverName, setServerName] = useState<string | null>(null)
-  const [database, setDatabase] = useState<string>('')
-  const [operationId, setOperationId] = useState<string | null>(null)
-  const [paramValues, setParamValues] = useState<Record<string, string>>({})
+  // Arriving from the Explorer's "Use in operation" (/operations?server=…&operation=…&p.login_name=…): start
+  // with that server, operation and value. Read ONCE, as the initial state; a plain /operations starts blank.
+  const [searchParams] = useSearchParams()
+  const [start] = useState(() => readOperationLink(searchParams))
+  const [serverName, setServerName] = useState<string | null>(start.serverName)
+  const [database, setDatabase] = useState<string>(start.database)
+  const [operationId, setOperationId] = useState<string | null>(start.operationId)
+  const [paramValues, setParamValues] = useState<Record<string, string>>(start.params)
   // Why a required field cannot be filled in right now (empty list on the server, no permission...): keeps Preview / Execute off.
   const [formBlocked, setFormBlocked] = useState<string[]>([])
 
@@ -218,6 +224,18 @@ export default function OperationsPage() {
               includePermissions={paramValues.include_permissions !== 'false'}
             />
           )}
+          {operation.id === 'changes.clone_database_access' && (
+            <AccessComparison
+              serverName={serverName}
+              source={paramValues.source_user ?? ''}
+              target={paramValues.target_user ?? ''}
+              includeRoles={paramValues.include_roles !== 'false'}
+              includePermissions={paramValues.include_permissions !== 'false'}
+              lookupId="database_access"
+              argName="user_name"
+              database={effectiveDatabase}
+            />
+          )}
 
           <div className="flex items-center gap-3">
             <button
@@ -248,8 +266,20 @@ export default function OperationsPage() {
           {preview.isError && <p className="text-sm text-red-700">{preview.error.message}</p>}
           {/* Dry run: the real final statements. The template (with @placeholders) stays one click away. */}
           <StatementList statements={preview.data?.statements} />
+          {/* Plain operations (no dry run): the same SQL with the values written in, for reading only. */}
+          {preview.data?.resolvedBatches && (
+            <div className="overflow-hidden rounded border border-slate-200 text-xs">
+              <p className="border-b border-slate-100 bg-slate-50 px-3 py-1.5 font-medium text-slate-600">
+                SQL with your values{' '}
+                <span className="font-normal text-slate-500">
+                  (for reading: the run sends the template below and passes the values as parameters)
+                </span>
+              </p>
+              <pre className="whitespace-pre-wrap p-3 font-mono text-slate-800">{preview.data.resolvedBatches.join('\nGO\n')}</pre>
+            </div>
+          )}
           {preview.data && (
-            <details open={!preview.data.statements} className="text-xs">
+            <details open={!preview.data.statements && !preview.data.resolvedBatches} className="text-xs">
               <summary className="cursor-pointer text-slate-500">Template SQL</summary>
               <pre className="mt-1 whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-3 text-slate-700">
                 {preview.data.batches.join('\nGO\n')}
@@ -295,7 +325,7 @@ export default function OperationsPage() {
             </p>
           )}
           {execute.data?.steps && <StepLog steps={execute.data.steps} />}
-          {execute.data && <ResultsGrid result={execute.data} />}
+          {execute.data && <ResultsGrid result={execute.data} exportName={`${serverName} ${operationId}`} />}
         </div>
       )}
     </div>

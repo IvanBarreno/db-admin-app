@@ -3,7 +3,18 @@
 import { describe, expect, it } from 'vitest'
 import type { LookupItem } from '../api/lookups'
 import type { OperationParameter } from '../api/operations'
-import { lockReason, lockWaitsFor } from './lookupText'
+import { lockReason, lockWaitsFor, splitNames } from './lookupText'
+
+describe('splitNames', () => {
+  it('reads one name per line, also split by commas and semicolons, trimmed', () => {
+    expect(splitNames('app_a\n  app_b \r\napp_c, app_d;app_e')).toEqual(['app_a', 'app_b', 'app_c', 'app_d', 'app_e'])
+  })
+
+  it('drops blank entries and keeps a repeated name once', () => {
+    expect(splitNames('\n\napp_a,,\napp_a\n  \n')).toEqual(['app_a'])
+    expect(splitNames('')).toEqual([])
+  })
+})
 
 type Rule = NonNullable<OperationParameter['lockWhen']>[number]
 

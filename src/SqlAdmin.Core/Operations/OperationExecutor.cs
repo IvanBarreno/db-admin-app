@@ -42,6 +42,18 @@ public static class OperationExecutor
             completed[p.Name] = password;
             generated[p.Name] = password;
         }
+
+        // generate_for_each: one password per item of a list parameter, as a JSON object {"item": "password"}.
+        // These are NOT added to `generated`: the caller shows that dictionary only when the whole run
+        // succeeded, but a list run can succeed for some items and fail for others. The script therefore
+        // returns each password in its result grid, next to the item it was really set for.
+        // Whatever the caller sent for such a parameter is ignored: the value is always generated here.
+        foreach (var p in operation.Params.Where(p => p.GenerateForEach is not null && p.Type == OperationParameterType.Password))
+        {
+            var items = MultiValues.Parse(completed.GetValueOrDefault(p.GenerateForEach!));
+            var perItem = items.ToDictionary(item => item, _ => SecretGenerator.GeneratePassword(), StringComparer.Ordinal);
+            completed[p.Name] = System.Text.Json.JsonSerializer.Serialize(perItem);
+        }
         return (completed, generated);
     }
 

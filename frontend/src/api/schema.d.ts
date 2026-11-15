@@ -467,6 +467,7 @@ export interface components {
             protect?: boolean;
             advanced?: boolean;
             prefixLookup?: string | null;
+            generateForEach?: string | null;
             lockWhen?: components["schemas"]["LockRule"][] | null;
             effectiveSource?: string | null;
         };
@@ -485,6 +486,8 @@ export interface components {
             checks: components["schemas"]["CheckResult"][] | null;
             /** @default null */
             statements: components["schemas"]["DryRunStatement"][] | null;
+            /** @default null */
+            resolvedBatches: string[] | null;
         };
         OperationRequest: {
             serverName: string;

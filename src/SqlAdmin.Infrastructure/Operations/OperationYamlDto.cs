@@ -72,6 +72,13 @@ public sealed class OperationParameterYamlDto
     public List<string>? DependsOn { get; set; }
     public bool MustExist { get; set; }
     public bool Multi { get; set; }
+
+    /// <summary>
+    /// <c>typed_list: true</c> on a <c>multi</c> parameter: the items are TYPED (or pasted) by the DBA, one per line,
+    /// instead of ticked from a lookup — for things that do not exist yet, such as the names of logins to create.
+    /// It is the one case where a list needs no <c>source</c>.
+    /// </summary>
+    public bool TypedList { get; set; }
     public bool DefaultAll { get; set; }
     public string? ChecklistGroup { get; set; }
     public string? ChecklistAction { get; set; }
@@ -84,6 +91,9 @@ public sealed class OperationParameterYamlDto
     public bool Protect { get; set; } = true;
     public bool Advanced { get; set; }
     public string? PrefixLookup { get; set; }
+
+    /// <summary><c>generate_for_each: logins</c> on a password: one generated password per item of that list parameter.</summary>
+    public string? GenerateForEach { get; set; }
     public List<LockRuleYamlDto>? LockWhen { get; set; }
 }
 

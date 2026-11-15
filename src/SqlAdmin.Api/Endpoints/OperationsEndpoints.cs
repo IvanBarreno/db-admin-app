@@ -81,9 +81,15 @@ public static class OperationsEndpoints
                 var token = destructive && !checks.Any(c => c.Blocking)
                     ? guard.IssueToken(operation, request.ServerName, request.Database, request.Params)
                     : null;
+                // Scripts with a dry run already show their real statements. The others (mostly audits) get the
+                // template with the values written in, so the DBA reads "= N'alice'" instead of "= @login_name".
+                var resolved = operation.SupportsDryRun
+                    ? null
+                    : SqlDisplay.Batches(operation, request.Params, engines.Get(serverDef.Engine).Dialect);
+
                 return TypedResults.Ok(new OperationPreviewResult(
                     plan.OperationId, plan.Batches, destructive, token, destructive && serverDef.IsProduction, checks,
-                    dryRun?.Statements));
+                    dryRun?.Statements, resolved));
             })
             .WithName("PreviewOperation")
             .WithSummary("Render the operation's template; nothing executes");

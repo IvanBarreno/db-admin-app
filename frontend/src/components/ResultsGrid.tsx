@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { downloadCsv, fileSlug, toCsv } from './csv'
 
 /** Shape shared by CustomSqlResult and OperationExecuteResult — anything ResultsGrid can render. */
 export interface ScriptRunResult {
@@ -13,10 +14,22 @@ export interface ScriptRunResult {
   error?: string | null
 }
 
-/** Renders every result set as a tab (batch #N) plus provider messages and the failure, if any. */
-export function ResultsGrid({ result }: { result: ScriptRunResult }) {
+/**
+ * Renders every result set as a tab (batch #N) plus provider messages and the failure, if any.
+ * `exportName` names the CSV file of the "Export CSV" button (e.g. the server and operation).
+ */
+export function ResultsGrid({ result, exportName = 'result' }: { result: ScriptRunResult; exportName?: string }) {
   const [activeTab, setActiveTab] = useState(0)
   const sets = result.resultSets
+  // A new result can have fewer grids than the tab that was open: never index past the end.
+  const shownIndex = Math.min(activeTab, sets.length - 1)
+
+  function exportCsv() {
+    const set = sets[shownIndex]
+    // Raw values, not the on-screen text: NULL becomes an empty field, dates keep their full precision.
+    const suffix = sets.length > 1 ? `-${shownIndex + 1}` : ''
+    downloadCsv(`${fileSlug(exportName)}${suffix}`, toCsv(set.columns, set.rows))
+  }
 
   return (
     <div className="space-y-3">
@@ -55,7 +68,20 @@ export function ResultsGrid({ result }: { result: ScriptRunResult }) {
               ))}
             </div>
           )}
-          <ResultTable resultSet={sets[Math.min(activeTab, sets.length - 1)]} />
+          <div className="mb-1 flex items-center gap-3 text-xs text-slate-500">
+            <span>
+              {sets[shownIndex].rows.length} row{sets[shownIndex].rows.length === 1 ? '' : 's'}
+            </span>
+            <button
+              type="button"
+              onClick={exportCsv}
+              disabled={sets[shownIndex].rows.length === 0}
+              className="ml-auto rounded border border-slate-300 px-2 py-1 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Export CSV
+            </button>
+          </div>
+          <ResultTable resultSet={sets[shownIndex]} />
         </div>
       )}
 

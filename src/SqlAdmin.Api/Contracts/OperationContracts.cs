@@ -43,7 +43,10 @@ public sealed record OperationPreviewResult(
     IReadOnlyList<CheckResult>? Checks = null,
     // Dry run: the exact statements the run will execute, read from the real server state (null when the
     // operation does not support it). Passwords are masked.
-    IReadOnlyList<DryRunStatement>? Statements = null);
+    IReadOnlyList<DryRunStatement>? Statements = null,
+    // Plain (non-dynamic) operations only: the batches with the values written in place of the
+    // @placeholders, for reading. Never executed — the run binds the values as parameters. Passwords are masked.
+    IReadOnlyList<string>? ResolvedBatches = null);
 
 /// <summary>Result of /execute — same shape as the custom-SQL result, so the frontend reuses ResultsGrid.</summary>
 public sealed record OperationExecuteResult(

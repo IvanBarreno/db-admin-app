@@ -278,3 +278,133 @@ operations:
       JOIN sys.database_principals u ON u.principal_id = o.principal_id
       WHERE u.name = @user_name AND o.is_ms_shipped = 0
       ORDER BY 1, 2;
+
+  # SQL Server's error log, newest first. sys.xp_readerrorlog takes up to two search texts and returns only
+  # the lines that contain BOTH; it needs the securityadmin role (or VIEW SERVER STATE on recent versions).
+  - id: audit.error_log_search
+    name: "Error log search (failed logins…)"
+    category: audit
+    scope: server
+    engines: [sqlserver]   # Azure SQL Database has no error log to read
+    destructive: false
+    description: "Searches the SQL Server error log, newest lines first. Typical use: failed logins of one account (search for the login name, or for 18456, the failed-login error number)."
+    params:
+      - name: search_text
+        type: string
+        required: false
+        default: "Login failed"
+        label: "Text to find"
+        help: "Only lines containing this text are returned. The log is written in the server's language: on a non-English server search for the error number (18456 = login failed) or leave it to the second filter."
+      # Not a picker of existing logins on purpose: failed logins are often for accounts that do not exist.
+      - name: also_contains
+        type: string
+        required: false
+        default: ""   # an optional parameter needs a default, otherwise @also_contains is never bound
+        label: "…and also containing (optional)"
+        help: "A second text the same line must contain, e.g. the login name or a client IP address."
+      - name: log_number
+        type: int
+        required: false
+        default: "0"
+        label: "Log file"
+        help: "0 = the current error log, 1 = the previous one, 2 = the one before… (a new file starts at every restart)."
+      - name: max_rows
+        type: int
+        required: false
+        default: "200"
+        label: "Maximum lines"
+        help: "Newest lines first; older matches beyond this number are left out."
+    sql: |
+      -- The extended procedure wants nvarchar VARIABLES (NULL = no filter), so copy the values first.
+      DECLARE @find nvarchar(255) = NULLIF(@search_text, N''),
+              @also nvarchar(255) = NULLIF(@also_contains, N'');
+      -- INSERT ... EXEC captures the procedure's rows so they can be sorted and limited.
+      DECLARE @log TABLE (log_date datetime, process_info nvarchar(100), log_text nvarchar(max));
+      INSERT INTO @log (log_date, process_info, log_text)
+      EXEC sys.xp_readerrorlog @log_number, 1, @find, @also;
+      SELECT TOP (@max_rows) log_date, process_info, log_text
+      FROM @log
+      ORDER BY log_date DESC;
+
+  # "What can this user REALLY do?" Explicit grants do not tell the whole story (roles, role nesting, DENY,
+  # ownership). The reliable answer is to become the user for a moment and ask the engine itself:
+  # EXECUTE AS ... fn_my_permissions ... REVERT. Needs IMPERSONATE on the user (sysadmin / db_owner have it).
+  - id: audit.effective_permissions
+    name: "Effective permissions of a user (test as the user)"
+    category: audit
+    scope: database
+    engines: [sqlserver, azuresql]
+    destructive: false
+    description: "Shows what a user can actually do in the selected database (or on one object), counting roles and DENYs — by impersonating the user for the duration of the check. Nothing is changed."
+    params:
+      - name: user_name
+        type: user
+        required: true
+      - name: securable
+        type: string
+        required: false
+        default: ""
+        label: "Object (optional)"
+        help: "schema.object, e.g. dbo.Customers, to see the permissions on that table, view or procedure. Empty = database-level permissions."
+    sql: |
+      DECLARE @who sysname = @user_name,
+              @object nvarchar(517) = NULLIF(@securable, N''),
+              @impersonating bit = 0;
+      DECLARE @class nvarchar(60) = CASE WHEN @object IS NULL THEN N'DATABASE' ELSE N'OBJECT' END;
+      DECLARE @granted TABLE (entity_name nvarchar(517), subentity_name nvarchar(128), permission_name nvarchar(128));
+
+      IF @object IS NOT NULL AND OBJECT_ID(@object) IS NULL
+        THROW 50000, 'The object does not exist in this database (write it as schema.object).', 1;
+
+      BEGIN TRY
+        EXECUTE AS USER = @who;          -- from here on we ARE the user...
+        SET @impersonating = 1;
+        INSERT INTO @granted (entity_name, subentity_name, permission_name)
+        SELECT entity_name, subentity_name, permission_name
+        FROM sys.fn_my_permissions(@object, @class);
+        REVERT;                          -- ...and back to ourselves
+        SET @impersonating = 0;
+      END TRY
+      BEGIN CATCH
+        -- Never leave the connection impersonated, whatever went wrong.
+        IF @impersonating = 1 REVERT;
+        THROW;
+      END CATCH;
+
+      SELECT @who AS user_name, @class AS securable_class, entity_name,
+             NULLIF(subentity_name, N'') AS column_name, permission_name
+      FROM @granted
+      ORDER BY entity_name, permission_name, subentity_name;
+
+  - id: audit.effective_server_permissions
+    name: "Effective server permissions of a login (test as the login)"
+    category: audit
+    scope: server
+    engines: [sqlserver]   # Azure SQL Database cannot impersonate a server login
+    destructive: false
+    description: "Shows what a login can actually do at server level, counting its server roles and DENYs — by impersonating the login for the duration of the check. Nothing is changed. Windows groups cannot be impersonated."
+    params:
+      - name: login_name
+        type: login
+        required: true
+    sql: |
+      DECLARE @who sysname = @login_name, @impersonating bit = 0, @is_sysadmin bit;
+      DECLARE @granted TABLE (permission_name nvarchar(128));
+
+      BEGIN TRY
+        EXECUTE AS LOGIN = @who;
+        SET @impersonating = 1;
+        INSERT INTO @granted (permission_name)
+        SELECT permission_name FROM sys.fn_my_permissions(NULL, N'SERVER');
+        SET @is_sysadmin = IS_SRVROLEMEMBER(N'sysadmin');
+        REVERT;
+        SET @impersonating = 0;
+      END TRY
+      BEGIN CATCH
+        IF @impersonating = 1 REVERT;
+        THROW;
+      END CATCH;
+
+      SELECT @who AS login_name, @is_sysadmin AS is_sysadmin, permission_name
+      FROM @granted
+      ORDER BY permission_name;

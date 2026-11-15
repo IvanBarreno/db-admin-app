@@ -124,6 +124,8 @@ public static class YamlOperationLoader
 
         if (p.Generate && type != OperationParameterType.Password)
             throw new OperationYamlException(file, $"parameter '{p.Name}': 'generate' only applies to type password.");
+        if (p.GenerateForEach is not null && type != OperationParameterType.Password)
+            throw new OperationYamlException(file, $"parameter '{p.Name}': 'generate_for_each' only applies to type password.");
 
         var hasSource = p.Source is not null || type is OperationParameterType.Login or OperationParameterType.User or OperationParameterType.Database;
         if (p.MustExist && !hasSource)
@@ -131,8 +133,10 @@ public static class YamlOperationLoader
         if (p.DependsOn is { Count: > 0 } && !hasSource)
             throw new OperationYamlException(file, $"parameter '{p.Name}': 'depends_on' needs a 'source'.");
 
-        if (p.Multi && !hasSource)
-            throw new OperationYamlException(file, $"parameter '{p.Name}': 'multi' needs a 'source' (the lookup that lists the items).");
+        if (p.Multi && !hasSource && !p.TypedList)
+            throw new OperationYamlException(file, $"parameter '{p.Name}': 'multi' needs a 'source' (the lookup that lists the items), or 'typed_list: true' for a list the DBA types.");
+        if (p.TypedList && (!p.Multi || hasSource))
+            throw new OperationYamlException(file, $"parameter '{p.Name}': 'typed_list' is for a 'multi' parameter without a 'source'.");
         if (p.DefaultAll && !p.Multi)
             throw new OperationYamlException(file, $"parameter '{p.Name}': 'default_all' only applies to 'multi' parameters.");
         if ((p.ChecklistGroup is not null) != (p.ChecklistAction is not null))
@@ -187,6 +191,7 @@ public static class YamlOperationLoader
             Protect = p.Protect,
             Advanced = p.Advanced,
             PrefixLookup = p.PrefixLookup,
+            GenerateForEach = p.GenerateForEach,
             LockWhen = lockWhen,
             Suggest = suggest,
             Multi = p.Multi,

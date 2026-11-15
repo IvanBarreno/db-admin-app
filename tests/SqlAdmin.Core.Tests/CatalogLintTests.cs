@@ -43,6 +43,36 @@ public sealed class CatalogLintTests
     }
 
     [Fact]
+    public void Every_optional_parameter_used_in_the_sql_has_a_default()
+    {
+        // The renderer binds a blank optional parameter only when the YAML gives it a default (default: ""
+        // is enough). Without one, leaving the field empty fails on the server with
+        // "Must declare the scalar variable @name" — found by the integration tests on 2026-11-15.
+        // List parameters are always bound (blank = "[]") and passwords are masked/generated, so both are exempt.
+        var missing = Shipped()
+            .SelectMany(o => o.Params.Select(p => (Op: o, Param: p)))
+            .Where(x => !x.Param.Required && !x.Param.Multi && x.Param.Default is null
+                        && x.Param.Type != OperationParameterType.Password
+                        && x.Op.Sql.Contains($"@{x.Param.Name}", StringComparison.Ordinal))
+            .Select(x => $"{x.Op.Id}.{x.Param.Name}")
+            .ToList();
+
+        Assert.True(missing.Count == 0, "Optional parameter without `default:` (use default: \"\"): " + string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void Generate_for_each_names_a_list_parameter_of_the_same_operation()
+    {
+        foreach (var op in Shipped())
+        foreach (var p in op.Params.Where(p => p.GenerateForEach is not null))
+        {
+            var list = op.Params.SingleOrDefault(x => x.Name == p.GenerateForEach);
+            Assert.True(list is { Multi: true }, $"{op.Id}.{p.Name}: generate_for_each must name a list (multi) parameter.");
+            Assert.True(op.SupportsDryRun, $"{op.Id}: per-item passwords need a dry-runnable script (the preview masks them).");
+        }
+    }
+
+    [Fact]
     public void Stop_on_error_defaults_to_true_everywhere()
     {
         var wrong = Shipped()

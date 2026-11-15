@@ -380,6 +380,7 @@ function Results({
               {s.steps && <StepLog steps={[...s.steps]} />}
               <ResultsGrid
                 result={{ success: s.status === 'OK', resultSets: s.resultSets, messages: s.messages, error: s.error }}
+                exportName={`offboarding ${s.key}`}
               />
             </div>
           </details>
