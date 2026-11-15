@@ -63,4 +63,52 @@ public sealed class CatalogLintTests
         foreach (var p in Shipped().SelectMany(o => o.Params).Where(p => p.PrefixLookup is not null))
             Assert.Contains($"id: {p.PrefixLookup}", text);
     }
+
+    [Fact]
+    public void Lock_rules_that_depend_on_another_parameter_name_a_parameter_of_the_same_operation()
+    {
+        foreach (var op in Shipped())
+            foreach (var rule in op.Params.SelectMany(p => p.LockWhen ?? []).Where(r => r.IfParam is not null))
+                Assert.Contains(op.Params, p => p.Name == rule.IfParam);
+    }
+
+    [Fact]
+    public void Password_reset_locks_logins_that_are_not_SQL_logins()
+    {
+        var login = Shipped().Single(o => o.Id == "changes.reset_password").Params.Single(p => p.Name == "login_name");
+
+        var rule = Assert.Single(login.LockWhen!);
+        Assert.Equal("type", rule.Column);
+        Assert.True(rule.Not);
+        Assert.Equal(["SQL_LOGIN"], rule.Values);
+    }
+
+    [Fact]
+    public void Offline_databases_are_locked_in_every_database_checklist()
+    {
+        var lists = Shipped().SelectMany(o => o.Params.Select(p => (Op: o.Id, Param: p))).Where(x => x.Param.Source == "databases" && x.Param.Multi);
+
+        foreach (var (op, param) in lists)
+            Assert.True(param.LockWhen?.Any(r => r.Column == "state" && r.Not && r.Values.Contains("ONLINE")) == true, $"{op}.{param.Name} does not lock offline databases");
+    }
+
+    [Fact]
+    public void Bulk_enable_disable_asks_for_the_action_first_and_locks_by_it()
+    {
+        var op = Shipped().Single(o => o.Id == "changes.set_logins_enabled");
+
+        Assert.True(op.Params.ToList().FindIndex(p => p.Name == "action") < op.Params.ToList().FindIndex(p => p.Name == "logins"));
+        var rules = op.Params.Single(p => p.Name == "logins").LockWhen!;
+        Assert.Contains(rules, r => r.IfParam == "action" && r.IfValue == "ENABLE" && r.Values.Contains("false"));
+        Assert.Contains(rules, r => r.IfParam == "action" && r.IfValue == "DISABLE" && r.Values.Contains("true"));
+    }
+
+    [Fact]
+    public void Permission_bundles_live_in_the_database_roles_checklist_only()
+    {
+        var ops = Shipped();
+
+        Assert.DoesNotContain(ops, o => o.Id == "provisioning.grant_bundle");
+        Assert.Equal(["execute", "developer"], ops.Single(o => o.Id == "changes.database_roles").Params.Single(p => p.Name == "permission_bundle").Choices);
+    }
 }

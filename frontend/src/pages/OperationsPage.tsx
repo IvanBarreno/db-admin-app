@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { AccessComparison } from '../components/AccessComparison'
 import { EnvBadge } from '../components/EnvBadge'
 import { ParamForm } from '../components/ParamForm'
 import { PreflightPanel } from '../components/PreflightPanel'
@@ -28,7 +29,7 @@ export default function OperationsPage() {
   const [operationId, setOperationId] = useState<string | null>(null)
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
   // Why a required field cannot be filled in right now (empty list on the server, no permission...): keeps Preview / Execute off.
-  const [cannotFill, setCannotFill] = useState<string[]>([])
+  const [formBlocked, setFormBlocked] = useState<string[]>([])
 
   const databases = useDatabases(serverName)
   const operations = useOperations(serverName)
@@ -39,8 +40,17 @@ export default function OperationsPage() {
 
   const server = servers.data?.find((s) => s.name === serverName)
 
+  // Only database-scope operations work inside ONE database, so only they get (and send) a database.
+  // Server-scope ops ignore it; all-databases ops pick theirs in their own checklist.
+  const needsDatabase = operation?.scope === 'Database'
+  const effectiveDatabase = needsDatabase ? database : ''
+  // Reasons the buttons stay off: a required field cannot be filled, or a database-level run has no database
+  // (a server with a default database, such as an Azure SQL Database, may leave it blank).
+  const missingDatabase = needsDatabase && !database && !server?.defaultDatabase
+  const cannotFill = missingDatabase ? ['Select the database this operation works in.', ...formBlocked] : formBlocked
+
   // Target context (F4): where the change lands and what it is, repeated in the bar, the button and the recap.
-  const where = server ? scopeLabel(operation?.scope ?? null, database, server) : null
+  const where = server ? scopeLabel(operation?.scope ?? null, effectiveDatabase, server) : null
   const summary = operation ? describeOperation(operation, paramValues) : null
 
   // Destructive operations: the preview hands back a token bound to the exact request, and
@@ -54,16 +64,20 @@ export default function OperationsPage() {
   function buildRequest() {
     return {
       serverName: serverName!,
-      database: database || null,
+      database: effectiveDatabase || null,
       params: paramValues,
       confirmToken: null,
       confirmServerName: null,
     }
   }
 
-  /** The token only fits the request it was issued for, so any edit throws the preview away. */
+  /**
+   * The token only fits the request it was issued for, so any edit throws the preview away. The previous RUN's
+   * result goes too: a grid that belongs to other values would be read as the answer to the new ones.
+   */
   function resetPreview() {
     preview.reset()
+    execute.reset()
     setTypedServerName('')
   }
 
@@ -123,26 +137,6 @@ export default function OperationsPage() {
             </select>
           </label>
 
-          <label className="text-sm">
-            <span className="mb-1 block text-slate-600">Database</span>
-            <select
-              value={database}
-              onChange={(e) => {
-                setDatabase(e.target.value)
-                resetPreview()
-              }}
-              disabled={!serverName || databases.isPending}
-              className="rounded border border-slate-300 px-2 py-1.5 disabled:opacity-50"
-            >
-              <option value="">{server?.defaultDatabase ?? '(login default)'}</option>
-              {databases.data?.map((d) => (
-                <option key={d.name} value={d.name}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
           {server && <EnvBadge environment={server.environment} />}
         </div>
       )}
@@ -177,15 +171,53 @@ export default function OperationsPage() {
 
       {operation && (
         <div className="space-y-3 rounded border border-slate-200 p-4">
+          {/* Only here, and only for operations that work inside one database: the user / role lists below need it. */}
+          {needsDatabase && (
+            <label className="block text-sm">
+              <span className="mb-1 block text-slate-600">
+                Database <span className="text-red-600">*</span>
+                <span className="ml-2 text-xs text-slate-400">this operation works inside one database</span>
+              </span>
+              <select
+                value={database}
+                onChange={(e) => {
+                  setDatabase(e.target.value)
+                  changeParams({}) // users and roles belong to the database: start the form again
+                }}
+                disabled={databases.isPending}
+                className="rounded border border-slate-300 px-2 py-1.5 disabled:opacity-50"
+              >
+                <option value="">{databases.isPending ? 'loading…' : `Select a database… (blank = ${server?.defaultDatabase ?? 'login default'})`}</option>
+                {databases.data?.map((d) => (
+                  <option key={d.name} value={d.name} disabled={!d.isOnline}>
+                    {d.name}
+                    {d.isOnline ? '' : ` (${d.state.toLowerCase()})`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           <ParamForm
             params={operation.params}
             values={paramValues}
             onChange={changeParams}
             serverName={serverName}
-            database={database}
+            database={effectiveDatabase}
             allowProtected={operation.readOnly}
-            onBlockedChange={setCannotFill}
+            onBlockedChange={setFormBlocked}
           />
+
+          {/* Clone: both logins' current access side by side, with what the target will hold afterwards. */}
+          {operation.id === 'changes.clone_server_access' && (
+            <AccessComparison
+              serverName={serverName}
+              source={paramValues.source_login ?? ''}
+              target={paramValues.target_login ?? ''}
+              includeRoles={paramValues.include_roles !== 'false'}
+              includePermissions={paramValues.include_permissions !== 'false'}
+            />
+          )}
 
           <div className="flex items-center gap-3">
             <button

@@ -150,6 +150,22 @@ public static class YamlOperationLoader
             suggest = new ParameterSuggestion(s.Lookup, s.Column, s.DependsOn, s.Map);
         }
 
+        List<LockRule>? lockWhen = null;
+        if (p.LockWhen is { Count: > 0 })
+        {
+            if (!hasSource)
+                throw new OperationYamlException(file, $"parameter '{p.Name}': 'lock_when' needs a 'source' (it locks items of that lookup).");
+            lockWhen = [];
+            foreach (var r in p.LockWhen)
+            {
+                if (r.Column.Length == 0 || r.Reason.Length == 0 || (r.In is null) == (r.NotIn is null))
+                    throw new OperationYamlException(file, $"parameter '{p.Name}': each 'lock_when' rule needs 'column', 'reason' and exactly one of 'in' / 'not_in'.");
+                if ((r.IfParam is null) != (r.IfValue is null))
+                    throw new OperationYamlException(file, $"parameter '{p.Name}': 'if_param' and 'if_value' go together.");
+                lockWhen.Add(new LockRule(r.Column, r.In ?? r.NotIn!, r.NotIn is not null, r.Reason, r.IfParam, r.IfValue));
+            }
+        }
+
         // Help text: the parameter's own, else the shared glossary entry for its name / its choice values.
         var shared = glossary.Parameters.GetValueOrDefault(p.Name);
         Dictionary<string, string>? choiceHelp = null;
@@ -171,6 +187,7 @@ public static class YamlOperationLoader
             Protect = p.Protect,
             Advanced = p.Advanced,
             PrefixLookup = p.PrefixLookup,
+            LockWhen = lockWhen,
             Suggest = suggest,
             Multi = p.Multi,
             DefaultAll = p.DefaultAll,

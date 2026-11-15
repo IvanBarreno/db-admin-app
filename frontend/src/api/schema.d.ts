@@ -391,6 +391,14 @@ export interface components {
             /** @default true */
             excludeLookalikes: boolean;
         };
+        LockRule: {
+            column: string;
+            values: string[];
+            not: boolean;
+            reason: string;
+            ifParam: string | null;
+            ifValue: string | null;
+        };
         LookupItem: {
             value: string;
             label: string;
@@ -459,6 +467,7 @@ export interface components {
             protect?: boolean;
             advanced?: boolean;
             prefixLookup?: string | null;
+            lockWhen?: components["schemas"]["LockRule"][] | null;
             effectiveSource?: string | null;
         };
         /** @enum {unknown} */

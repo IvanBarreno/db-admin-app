@@ -100,6 +100,12 @@ public sealed record OperationParameter
     /// </summary>
     public string? PrefixLookup { get; init; }
 
+    /// <summary>
+    /// Rules that show some lookup items LOCKED (visible, not pickable) with a reason: Windows logins on a password
+    /// reset, logins already in the wanted state, offline databases. UX only — the script and its checks still guard the run.
+    /// </summary>
+    public IReadOnlyList<LockRule>? LockWhen { get; init; }
+
     /// <summary>The lookup that feeds this parameter: explicit <c>source:</c>, else implied by Login/User/Database.</summary>
     public string? EffectiveSource => Source ?? Type switch
     {
@@ -109,6 +115,20 @@ public sealed record OperationParameter
         _ => null,
     };
 }
+
+/// <summary>
+/// Locks a lookup item when its <paramref name="Column"/> (text form: "true"/"false" for booleans) is in
+/// <paramref name="Values"/> — or, with <paramref name="Not"/>, when it is NOT in them. If <paramref name="IfParam"/>
+/// is set the rule only applies while that other parameter has the value <paramref name="IfValue"/>
+/// (e.g. lock "already disabled" logins only while the action is DISABLE).
+/// </summary>
+public sealed record LockRule(
+    string Column,
+    IReadOnlyList<string> Values,
+    bool Not,
+    string Reason,
+    string? IfParam,
+    string? IfValue);
 
 /// <summary>
 /// "Ask the server, then propose a value": the form runs <paramref name="Lookup"/> (with the values of

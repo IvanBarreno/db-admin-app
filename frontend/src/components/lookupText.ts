@@ -22,6 +22,34 @@ export function encodeList(values: readonly string[]): string {
   return values.length > 0 ? JSON.stringify(values) : ''
 }
 
+/**
+ * Why a lookup item cannot be picked, from the parameter's `lock_when` rules (null = pickable). A rule with `ifParam`
+ * only applies while that other field has the wanted value. Text comparison: booleans are "true" / "false".
+ */
+export function lockReason(
+  rules: readonly { column: string; values: string[]; not: boolean; reason: string; ifParam?: string | null; ifValue?: string | null }[] | null | undefined,
+  item: LookupItem,
+  values: Record<string, string>,
+): string | null {
+  for (const rule of rules ?? []) {
+    if (rule.ifParam && (values[rule.ifParam] ?? '') !== rule.ifValue) continue
+    const cell = (item.extra as Record<string, unknown>)[rule.column]
+    if (cell === undefined || cell === null) continue // the lookup has no such fact here (e.g. Azure): do not lock
+    const listed = rule.values.includes(String(cell))
+    if (rule.not ? !listed : listed) return rule.reason
+  }
+  return null
+}
+
+/** The first parameter that a `lock_when` rule is waiting for (still blank), or null. */
+export function lockWaitsFor(
+  rules: readonly { ifParam?: string | null }[] | null | undefined,
+  values: Record<string, string>,
+): string | null {
+  for (const rule of rules ?? []) if (rule.ifParam && (values[rule.ifParam] ?? '') === '') return rule.ifParam
+  return null
+}
+
 /** A table cell from a lookup value: booleans as ✓ / –, dates trimmed to minutes, null as empty. */
 export function formatCell(value: unknown): string {
   if (value === null || value === undefined) return ''

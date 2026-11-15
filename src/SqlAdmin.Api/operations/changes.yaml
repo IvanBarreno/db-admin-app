@@ -23,6 +23,11 @@ operations:
         type: login
         required: true
         must_exist: true
+        # Only SQL logins have a password; Windows / AD logins and groups are managed by Windows.
+        lock_when:
+          - column: type
+            not_in: [SQL_LOGIN]
+            reason: "no password to reset: managed by Windows / AD"
       # Blank = the server generates a strong password and shows it once after the run.
       - name: password
         type: password
@@ -32,6 +37,11 @@ operations:
         type: bool
         required: false
         default: "false"
+    checks:
+      - id: sql_login_only
+        message: "Only SQL logins have a password. Windows / AD logins are managed by Windows."
+        sql: |
+          SELECT 1 FROM sys.server_principals WHERE name = @login_name AND type <> 'S';
     sql: |
       IF LEN(@password) > 128 THROW 50000, N'Passwords longer than 128 characters are not supported.', 1;
       DECLARE @sql nvarchar(max) = N'ALTER LOGIN ' + QUOTENAME(@login_name)
@@ -80,16 +90,28 @@ operations:
     destructive: false
     destructive_when: { param: action, values: [DISABLE] }
     params:
+      # Pick the action FIRST: the list below then locks the logins that are already in that state.
+      - name: action
+        type: choice
+        required: true
+        choices: [ENABLE, DISABLE]
       - name: logins
         type: string
         source: logins
         multi: true
         required: true
         must_exist: true
-      - name: action
-        type: choice
-        required: true
-        choices: [ENABLE, DISABLE]
+        lock_when:
+          - column: is_disabled
+            in: ["false"]
+            reason: "already enabled"
+            if_param: action
+            if_value: ENABLE
+          - column: is_disabled
+            in: ["true"]
+            reason: "already disabled"
+            if_param: action
+            if_value: DISABLE
       - name: stop_on_error
         type: bool
         required: false
@@ -339,20 +361,34 @@ operations:
         must_exist: true
         checklist_group: roles
         checklist_action: drop
+      # Permissions that are not a role (the roles themselves are in the checklist above). Optional; it only ADDS.
+      - name: permission_bundle
+        type: choice
+        required: false
+        choices: [execute, developer]
+        choice_help:
+          execute: "GRANT EXECUTE: run every stored procedure and function of the database."
+          developer: "VIEW DEFINITION + EXECUTE + CREATE PROCEDURE, and ALTER on schema dbo."
       - name: stop_on_error
         type: bool
         required: false
         default: "true"
     sql: |
-      DECLARE @items TABLE (n int IDENTITY(1,1), act varchar(10), item nvarchar(256));
-      INSERT @items (act, item) SELECT 'ADD', value FROM OPENJSON(@roles_to_add);
-      INSERT @items (act, item) SELECT 'DROP', value FROM OPENJSON(@roles_to_drop);
+      -- Items run one by one: roles to add / drop, then the optional permission bundle (act GRANT).
+      DECLARE @q nvarchar(300) = QUOTENAME(@user_name);
+      DECLARE @items TABLE (n int IDENTITY(1,1), act varchar(10), item nvarchar(256), stmt nvarchar(max));
+      INSERT @items (act, item, stmt) SELECT 'ADD', value, N'ALTER ROLE ' + QUOTENAME(value) + N' ADD MEMBER ' + @q + N';' FROM OPENJSON(@roles_to_add);
+      INSERT @items (act, item, stmt) SELECT 'DROP', value, N'ALTER ROLE ' + QUOTENAME(value) + N' DROP MEMBER ' + @q + N';' FROM OPENJSON(@roles_to_drop);
+      IF @permission_bundle = N'execute'
+        INSERT @items (act, item, stmt) VALUES ('GRANT', N'execute', N'GRANT EXECUTE TO ' + @q + N';');
+      IF @permission_bundle = N'developer'
+        INSERT @items (act, item, stmt) VALUES ('GRANT', N'developer',
+          N'GRANT VIEW DEFINITION, EXECUTE, CREATE PROCEDURE TO ' + @q + N'; GRANT ALTER ON SCHEMA::dbo TO ' + @q + N';');
       DECLARE @results TABLE (item nvarchar(256), act varchar(10), status varchar(7), message nvarchar(4000));
       DECLARE @n int = 1, @max int = (SELECT COUNT(*) FROM @items), @act varchar(10), @item nvarchar(256), @sql nvarchar(max), @failed int = 0;
       WHILE @n <= @max
       BEGIN
-        SELECT @act = act, @item = item FROM @items WHERE n = @n;
-        SET @sql = N'ALTER ROLE ' + QUOTENAME(@item) + N' ' + @act + N' MEMBER ' + QUOTENAME(@user_name) + N';';
+        SELECT @act = act, @item = item, @sql = stmt FROM @items WHERE n = @n;
         BEGIN TRY
           {{exec:@sql}};
           INSERT @results VALUES (@item, @act, 'OK', NULL);

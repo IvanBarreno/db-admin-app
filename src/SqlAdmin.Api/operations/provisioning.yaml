@@ -158,6 +158,10 @@ operations:
         default_all: true
         required: false
         must_exist: true
+        lock_when:
+          - column: state
+            not_in: [ONLINE]
+            reason: "not online: cannot be written to"
     sql: |
       DECLARE @u sysname = COALESCE(NULLIF(@user_name, N''), @login_name);
       DECLARE @sql nvarchar(max);
@@ -191,39 +195,6 @@ operations:
       SELECT @u AS user_name,
              IS_ROLEMEMBER(N'db_datareader', @u) AS is_datareader,
              IS_ROLEMEMBER(N'db_datawriter', @u) AS is_datawriter;
-
-  - id: provisioning.grant_bundle
-    name: "Grant permission bundle (selected database)"
-    category: provisioning
-    scope: database
-    engines: [sqlserver]
-    destructive: false
-    params:
-      - name: user_name
-        type: user
-        required: true
-        must_exist: true
-      - name: bundle
-        type: choice
-        required: true
-        choices: [read_only, read_write, execute, developer]
-    sql: |
-      -- read_only: db_datareader | read_write: + db_datawriter | execute: GRANT EXECUTE
-      -- developer: VIEW DEFINITION + EXECUTE + CREATE PROCEDURE + ALTER ON SCHEMA::dbo
-      DECLARE @q nvarchar(300) = QUOTENAME(@user_name);
-      DECLARE @sql nvarchar(max) = CASE @bundle
-        WHEN N'read_only'  THEN N'ALTER ROLE db_datareader ADD MEMBER ' + @q
-        WHEN N'read_write' THEN N'ALTER ROLE db_datareader ADD MEMBER ' + @q + N'; ALTER ROLE db_datawriter ADD MEMBER ' + @q
-        WHEN N'execute'    THEN N'GRANT EXECUTE TO ' + @q
-        WHEN N'developer'  THEN N'GRANT VIEW DEFINITION, EXECUTE, CREATE PROCEDURE TO ' + @q
-                                + N'; GRANT ALTER ON SCHEMA::dbo TO ' + @q
-      END;
-      {{exec:@sql}};
-      SELECT dp.permission_name, dp.state_desc, dp.class_desc
-      FROM sys.database_permissions dp
-      JOIN sys.database_principals u ON u.principal_id = dp.grantee_principal_id
-      WHERE u.name = @user_name
-      ORDER BY dp.permission_name;
 
   - id: provisioning.create_login_for_orphan
     name: "Create a login that takes over an orphaned user's SID (selected database)"

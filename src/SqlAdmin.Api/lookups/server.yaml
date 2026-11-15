@@ -242,6 +242,28 @@ lookups:
       WHERE @login_name IS NULL OR SUSER_SNAME(j.owner_sid) = @login_name
       ORDER BY j.name;
 
+  - id: server_access
+    name: "Server roles and explicit server permissions of a login"
+    scope: server
+    engines: [sqlserver]
+    args: [login_name]
+    empty_text: "This login holds no server roles or explicit server permissions."
+    sql: |
+      -- Feeds the side-by-side comparison of "Clone server access". CONNECT SQL is left out, as the clone skips it.
+      -- COLLATE: role names and permission names come from catalogs with different collations (UNION would fail).
+      SELECT 'ROLE:' + CAST(r.name AS nvarchar(128)) COLLATE DATABASE_DEFAULT AS value, 'ROLE' AS kind,
+             CAST(r.name AS nvarchar(128)) COLLATE DATABASE_DEFAULT AS item, 'MEMBER' AS state
+      FROM sys.server_role_members srm
+      JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+      JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+      WHERE m.name = @login_name
+      UNION ALL
+      SELECT 'PERMISSION:' + CAST(p.permission_name AS nvarchar(128)) COLLATE DATABASE_DEFAULT, 'PERMISSION',
+             CAST(p.permission_name AS nvarchar(128)) COLLATE DATABASE_DEFAULT, CAST(p.state_desc AS nvarchar(60)) COLLATE DATABASE_DEFAULT
+      FROM sys.server_permissions p
+      WHERE p.grantee_principal_id = SUSER_ID(@login_name) AND p.class = 100 AND p.permission_name <> 'CONNECT SQL'
+      ORDER BY 2, 3;
+
   - id: login_impact
     name: "What offboarding a login will touch"
     scope: server

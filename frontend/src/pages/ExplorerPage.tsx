@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { Combobox } from '../components/Combobox'
+import { lookupHint } from '../components/lookupText'
 import { LookupTable } from '../components/LookupTable'
 import { TargetBar } from '../components/TargetBar'
 import { useLookup } from '../api/lookups'
@@ -165,19 +167,14 @@ function Login360({ serverName, login, onLogin }: { serverName: string; login: s
     <div className="space-y-4">
       <label className="block text-sm">
         <span className="mb-1 block text-slate-600">Login</span>
-        <input
-          type="text"
-          list="explorer-logins"
+        {/* The app's own combobox (full list on focus, ▾ button), not a native datalist. Read-only page: protected logins may be viewed. */}
+        <Combobox
           value={login}
-          onChange={(e) => onLogin(e.target.value)}
+          onChange={onLogin}
+          items={(logins.data?.items ?? []).map((i) => ({ value: i.value, hint: lookupHint(i) }))}
           placeholder={logins.isPending ? 'loading…' : 'pick or type a login'}
-          className="w-72 rounded border border-slate-300 px-2 py-1.5"
+          className="w-72"
         />
-        <datalist id="explorer-logins">
-          {logins.data?.items.map((i) => (
-            <option key={i.value} value={i.value} />
-          ))}
-        </datalist>
       </label>
 
       {login === '' ? (

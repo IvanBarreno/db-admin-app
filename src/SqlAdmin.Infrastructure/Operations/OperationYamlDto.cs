@@ -84,6 +84,18 @@ public sealed class OperationParameterYamlDto
     public bool Protect { get; set; } = true;
     public bool Advanced { get; set; }
     public string? PrefixLookup { get; set; }
+    public List<LockRuleYamlDto>? LockWhen { get; set; }
+}
+
+/// <summary><c>lock_when: [{ column: type, not_in: [SQL_LOGIN], reason: "…", if_param: action, if_value: ENABLE }]</c></summary>
+public sealed class LockRuleYamlDto
+{
+    public string Column { get; set; } = "";
+    public List<string>? In { get; set; }
+    public List<string>? NotIn { get; set; }
+    public string Reason { get; set; } = "";
+    public string? IfParam { get; set; }
+    public string? IfValue { get; set; }
 }
 
 /// <summary><c>suggest: { lookup, column, depends_on: [...], map: { "true": ENABLE } }</c></summary>

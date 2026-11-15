@@ -20,7 +20,7 @@ glossary:
     audit.databases_owned: "Lists the databases a login owns. A login that owns a database cannot be dropped."
     audit.user_mapping: "Shows, in the selected database, which user a login is mapped to."
     audit.database_roles: "Lists the database roles a user belongs to in the selected database."
-    audit.database_roles_all: "Finds the database roles of a user in every online database (or only the ones you tick)."
+    audit.database_roles_all: "Users and their database roles across the online databases you tick. Tick all users for a full map, or just one to follow it everywhere."
     audit.orphaned_users_all: "Finds users whose login no longer exists (orphans), in every online database."
     audit.orphaned_users: "Finds users in the selected database whose login no longer exists (orphans)."
     audit.schema_ownership: "Lists the schemas and objects a user owns; they must be handed over before the user can be dropped."
@@ -29,7 +29,6 @@ glossary:
     provisioning.create_windows_login: "Creates a login for a Windows/Active Directory user or group (written DOMAIN\\name)."
     provisioning.create_user: "Creates a user for an existing login in the selected database."
     provisioning.user_all_databases: "Creates (or re-maps) a user for a login in every online database and adds it to the chosen roles. Tick databases to limit it."
-    provisioning.grant_bundle: "Gives a user a ready-made set of permissions in the selected database: read only, read/write, execute or developer."
     provisioning.create_login_for_orphan: "Creates the missing login for an orphaned user, keeping the user's SID so it is mapped again without changing the database."
     # --- changes ---
     changes.reset_password: "Sets a new password for a SQL login, optionally unlocking it."
@@ -38,7 +37,7 @@ glossary:
     changes.server_roles: "Shows a login's server roles as a checklist: tick to add a role, untick to remove it. Only removals ask for confirmation."
     changes.server_permission: "Grants, revokes or denies server-level permissions to a login. The list of permissions comes from the server."
     changes.rename_user: "Renames a user in the selected database (the login is not touched)."
-    changes.database_roles: "Shows a user's database roles as a checklist: tick to add a role, untick to remove it. Only removals ask for confirmation."
+    changes.database_roles: "Shows a user's database roles as a checklist: tick to add a role, untick to remove it; can also add the execute or developer permission bundle. Only removals ask for confirmation."
     changes.fix_orphaned_user: "Maps an orphaned user to a login with a different name."
     changes.fix_orphaned_users: "Maps several orphaned users to the login with the same name."
     changes.drop_orphaned_users: "Drops orphaned users from the selected database (their schemas are handed to dbo first)."
@@ -93,9 +92,12 @@ glossary:
     default_schema:
       label: "Default schema"
       help: "The schema used for objects the user creates or references without a schema name."
-    bundle:
-      label: "Permission bundle"
-      help: "A ready-made group of permissions; see each option for what it includes."
+    permission_bundle:
+      label: "Add a permission bundle"
+      help: "Optional ready-made permissions that are not a role (the roles are in the checklist). Only adds; leave blank for none."
+    user_names:
+      label: "Users"
+      help: "Whose roles to show. Every login ticked (the default) = every user of each database, even users without a login or without roles."
     add_datareader:
       label: "Read data (db_datareader)"
       help: "Adds the user to db_datareader: it can read every table and view."

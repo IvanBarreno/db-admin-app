@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { OperationParameter } from '../api/operations'
-import { useLookup } from '../api/lookups'
+import { useLookup, type LookupItem } from '../api/lookups'
 import { Combobox, type ComboItem } from './Combobox'
-import { lookupHint } from './lookupText'
+import { lockReason, lookupHint } from './lookupText'
 import { useLookupState, type BlockReporter } from './lookupState'
 import { MultiChecklist } from './MultiChecklist'
 import { PasswordGeneratorModal } from './PasswordGeneratorModal'
@@ -153,11 +153,14 @@ function ChoiceSelect({
   value,
   onChange,
   className,
+  disabledChoices,
 }: {
   param: OperationParameter
   value: string
   onChange: (value: string) => void
   className: string
+  /** Choices shown but not selectable (e.g. the state the login is already in). */
+  disabledChoices?: readonly string[]
 }) {
   const help = param.choiceHelp ?? {}
   return (
@@ -165,7 +168,7 @@ function ChoiceSelect({
       <select value={value} onChange={(e) => onChange(e.target.value)} className={className} title={help[value]}>
         <option value="">Select…</option>
         {param.choices?.map((choice) => (
-          <option key={choice} value={choice} title={help[choice]}>
+          <option key={choice} value={choice} title={help[choice]} disabled={disabledChoices?.includes(choice)}>
             {choice}
           </option>
         ))}
@@ -207,22 +210,20 @@ function SuggestedChoice({
   const rawText = raw === undefined || raw === null ? null : String(raw)
   const suggested = rawText === null ? null : (suggest.map[rawText] ?? null)
 
-  // Apply the proposal once per proposed value, and only over a blank field.
-  const applied = useRef<string | null>(null)
+  // The server's answer decides: the only choice left open is the one that changes the current state
+  // (a disabled login can only be ENABLED), so it is selected and the others are greyed out.
   useEffect(() => {
-    if (suggested !== null && applied.current !== suggested && value === '') {
-      applied.current = suggested
-      onChange(suggested)
-    }
+    if (suggested !== null && value !== suggested) onChange(suggested)
   }, [suggested, value, onChange])
+
+  const disabledChoices = suggested === null ? undefined : (param.choices ?? []).filter((c) => c !== suggested)
 
   return (
     <>
-      <ChoiceSelect param={param} value={value} onChange={onChange} className={className} />
+      <ChoiceSelect param={param} value={value} onChange={onChange} className={className} disabledChoices={disabledChoices} />
       {suggested !== null && (
         <span className="mt-0.5 block text-xs text-slate-500">
-          Server says {suggest.column} = {rawText}
-          {value !== suggested && ` → suggested ${suggested}`}
+          Server says {suggest.column} = {rawText}: only {suggested} makes sense.
         </span>
       )}
     </>
@@ -468,19 +469,25 @@ function LookupInput({
   }, [onBlock, param.name, blocking])
 
   const protectedLocks = !allowProtected && param.protect !== false
+  // Why an item cannot be picked: it is a protected login, or a `lock_when` rule of the parameter applies (Windows login on a password reset…).
+  const lockOf = (item: LookupItem): string | undefined => {
+    const extra = item.extra as Record<string, unknown>
+    if (protectedLocks && extra.is_protected === true) return `view only — ${String(extra.protected_reason ?? 'protected')}`
+    return lockReason(param.lockWhen, item, values) ?? undefined
+  }
   const comboItems: ComboItem[] = state.items.map((item) => {
     const extra = item.extra as Record<string, unknown>
     return {
       value: item.value,
       hint: lookupHint(item),
       description: typeof extra.description === 'string' ? extra.description : undefined,
-      locked: protectedLocks && extra.is_protected === true ? String(extra.protected_reason ?? 'protected') : undefined,
+      locked: lockOf(item),
     }
   })
 
   const typed = value.trim().toLowerCase()
   const match = state.items.find((i) => i.value.toLowerCase() === typed)
-  const lockedHit = protectedLocks && match && (match.extra as Record<string, unknown>).is_protected === true ? match : null
+  const lockedHit = match && lockOf(match) ? match : null
   const unknown = strict && ready && typed !== '' && !match
 
   const placeholder = state.status === 'loading' ? 'loading…' : disabled ? state.reason ?? undefined : undefined
@@ -510,7 +517,7 @@ function LookupInput({
       {unknown && <span className="mt-0.5 block text-xs text-red-600">not found on this server</span>}
       {lockedHit && (
         <span className="mt-0.5 block max-w-72 text-xs text-red-600">
-          🔒 [{lockedHit.value}] is {String((lockedHit.extra as Record<string, unknown>).protected_reason)}: view only — pick another.
+          🔒 [{lockedHit.value}]: {lockOf(lockedHit)}. Pick another.
         </span>
       )}
     </>

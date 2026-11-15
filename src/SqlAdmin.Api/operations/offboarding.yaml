@@ -239,6 +239,10 @@ operations:
         default_all: true
         required: false
         must_exist: true
+        lock_when:
+          - column: state
+            not_in: [ONLINE]
+            reason: "not online: cannot be reached"
     sql: |
       -- Find the user by SID, so a renamed user is still found.
       DECLARE @user sysname = (

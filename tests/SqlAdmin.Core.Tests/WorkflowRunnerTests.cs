@@ -155,6 +155,45 @@ public class WorkflowRunnerTests
         Assert.Contains("azuresql", ex.Message);
     }
 
+    // ---- protected principals through the whole checklist ---------------------------------
+    // The preflight runs against an in-memory SQLite database: the T-SQL checks written in the YAML cannot
+    // run there (PreflightRunner turns those into non-blocking warnings), but the protected-principal rule is
+    // generic C#, so it is the only thing that can BLOCK here. TestEngine says the app connects as "app_login".
+
+    private static async Task<IReadOnlyList<WorkflowCheckResult>> ProtectedResults(
+        IReadOnlyCollection<string> steps, Dictionary<string, string?> values)
+    {
+        using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=:memory:");
+        db.Open();
+
+        var checks = await WorkflowRunner.PreflightAsync(
+            Plan(steps, values), "SRV", new SharedSqliteFactory(db), CancellationToken.None);
+        return checks.Where(c => c.Result.Id == "protected_principal").ToList();
+    }
+
+    [Fact]
+    public async Task Offboarding_the_app_login_is_blocked_on_every_changing_step_but_not_the_snapshot()
+    {
+        var values = Values();
+        values["login_name"] = "app_login";
+        string[] steps = ["disable", "kill_sessions", "reassign_jobs", "reassign_databases", "revoke_server_access", "drop_users", "drop_login"];
+
+        var blocked = await ProtectedResults(steps, values);
+
+        Assert.All(blocked, c => Assert.True(c.Result.Blocking));
+        Assert.Equal(steps.Order(), blocked.Select(c => c.StepKey).Distinct().Order()); // every changing step refuses
+        Assert.DoesNotContain(blocked, c => c.StepKey == "snapshot");                    // the report is read-only
+    }
+
+    [Fact]
+    public async Task Offboarding_someone_else_passes_even_when_the_app_login_receives_the_ownership()
+    {
+        var values = Values(newOwner: "app_login"); // leaver = "leaver"; the app login only RECEIVES objects
+        values["jobs_new_owner"] = "app_login";
+
+        Assert.Empty(await ProtectedResults(["disable", "reassign_jobs", "reassign_databases", "drop_login"], values));
+    }
+
     [Fact]
     public void Token_values_change_when_the_selected_steps_change()
     {

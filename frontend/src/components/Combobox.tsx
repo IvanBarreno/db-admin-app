@@ -7,7 +7,7 @@ export interface ComboItem {
   hint?: string
   /** Tooltip with a longer explanation. */
   description?: string
-  /** Set = the row is shown but cannot be picked; the text says why (e.g. "the account this app connects with"). */
+  /** Set = the row is shown but cannot be picked; the text says why (e.g. "view only — the account this app connects with"). */
   locked?: string
 }
 
@@ -139,7 +139,7 @@ export function Combobox({
               }`}
             >
               <span className="font-mono text-xs">{item.value}</span>
-              {item.locked && <span className="text-xs">🔒 view only — {item.locked}</span>}
+              {item.locked && <span className="text-xs">🔒 {item.locked}</span>}
               {item.hint && !item.locked && <span className="truncate text-xs text-slate-500">{item.hint}</span>}
             </li>
           ))}
