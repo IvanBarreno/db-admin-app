@@ -9,10 +9,13 @@ public sealed record OperationSummary(
     string Category,
     OperationScope Scope,
     bool Destructive,
-    IReadOnlyList<OperationParameter> Params)
+    IReadOnlyList<OperationParameter> Params,
+    // What the operation does, for the text under the picker; ReadOnly operations may look at protected logins.
+    string? Description = null,
+    bool ReadOnly = false)
 {
     public static OperationSummary From(OperationDefinition op) => new(
-        op.Id, op.Name, op.Category, op.Scope, op.Destructive, op.Params);
+        op.Id, op.Name, op.Category, op.Scope, op.Destructive, op.Params, op.Description, op.ReadOnly);
 }
 
 /// <summary>POST /api/operations/{id}/preview and /execute — parameter values keyed by name, as typed in the form.</summary>
@@ -35,7 +38,15 @@ public sealed record OperationPreviewResult(
     IReadOnlyList<string> Batches,
     bool Destructive = false,
     string? ConfirmToken = null,
-    bool RequiresServerName = false);
+    bool RequiresServerName = false,
+    // Preflight checks (YAML `checks:`) with their outcome; a blocking failure also withholds the token.
+    IReadOnlyList<CheckResult>? Checks = null,
+    // Dry run: the exact statements the run will execute, read from the real server state (null when the
+    // operation does not support it). Passwords are masked.
+    IReadOnlyList<DryRunStatement>? Statements = null,
+    // Plain (non-dynamic) operations only: the batches with the values written in place of the
+    // @placeholders, for reading. Never executed — the run binds the values as parameters. Passwords are masked.
+    IReadOnlyList<string>? ResolvedBatches = null);
 
 /// <summary>Result of /execute — same shape as the custom-SQL result, so the frontend reuses ResultsGrid.</summary>
 public sealed record OperationExecuteResult(

@@ -24,15 +24,40 @@ public static class TemplateRenderer
     // not a replacement for it.
     private static readonly Regex IdentifierAllowList = new(@"^[A-Za-z_][A-Za-z0-9_$#]*$", RegexOptions.Compiled);
 
+    /// <summary>
+    /// <c>{{exec:@sql}}</c> — "run the statement text held in @sql". It expands to a branch on the
+    /// <c>@dry_run</c> parameter: when 1 the text is only SELECTed (as a <c>statement</c> column), otherwise
+    /// it is EXECuted. Scripts therefore build their statements in one place and the preview shows exactly
+    /// what execute will run — the only difference is this last branch.
+    /// </summary>
+    private static readonly Regex ExecMacro = new(@"\{\{exec:(@\w+)\}\}", RegexOptions.Compiled);
+
+    /// <summary>Stand-in for password values in a dry run: the statement shape matters, the secret never does.</summary>
+    public const string DryRunPasswordMask = "***";
+
+    /// <param name="operation">The operation whose template is rendered.</param>
+    /// <param name="supplied">Parameter values as the DBA typed them, keyed by parameter name.</param>
+    /// <param name="dialect">Quoting and parameter-prefix rules of the target engine.</param>
+    /// <param name="dryRun">
+    /// True: <c>@dry_run</c> is bound to 1, so <c>{{exec:...}}</c> scripts return their statements instead of
+    /// running them. Password values are replaced by a mask so they cannot leak into the preview.
+    /// </param>
     public static RenderedTemplate Render(
         OperationDefinition operation,
         IReadOnlyDictionary<string, string?> supplied,
-        ISqlDialect dialect)
+        ISqlDialect dialect,
+        bool dryRun = false)
     {
         // Blank or missing values fall back to the YAML default, so optional parameters
         // (e.g. a bool flag the DBA left on "—") are always bound and the SQL never meets an
         // undeclared @variable.
-        var values = new Dictionary<string, string?>(supplied);
+        // List parameters become canonical JSON arrays (blank = "[]") so OPENJSON(@name) always has input.
+        var values = MultiValues.Normalize(operation.Params, supplied);
+        if (dryRun)
+        {
+            foreach (var password in operation.Params.Where(p => p.Type == OperationParameterType.Password))
+                values[password.Name] = DryRunPasswordMask;
+        }
         foreach (var param in operation.Params.Where(p => p.Default is not null))
         {
             if (string.IsNullOrWhiteSpace(values.GetValueOrDefault(param.Name))) values[param.Name] = param.Default;
@@ -40,9 +65,12 @@ public static class TemplateRenderer
 
         foreach (var param in operation.Params.Where(p => p.Required))
         {
-            if (!values.TryGetValue(param.Name, out var value) || string.IsNullOrWhiteSpace(value))
+            if (!values.TryGetValue(param.Name, out var value) || string.IsNullOrWhiteSpace(value)
+                || (param.Multi && MultiValues.IsEmpty(value)))
             {
-                throw new TemplateRenderException($"Parameter '{param.Name}' is required.");
+                throw new TemplateRenderException(param.Multi
+                    ? $"Choose at least one item for '{param.Name}'."
+                    : $"Parameter '{param.Name}' is required.");
             }
         }
 
@@ -59,7 +87,10 @@ public static class TemplateRenderer
             }
         }
 
-        var sql = IdentPlaceholder.Replace(operation.Sql, match =>
+        var template = ExecMacro.Replace(operation.Sql, m =>
+            $"IF @dry_run = 1 SELECT ISNULL(NULLIF({m.Groups[1].Value}, N''), N'-- nothing to do') AS statement ELSE EXEC ({m.Groups[1].Value})");
+
+        var sql = IdentPlaceholder.Replace(template, match =>
         {
             var name = match.Groups[1].Value;
             var value = values.GetValueOrDefault(name)
@@ -84,13 +115,23 @@ public static class TemplateRenderer
             parameters.Add(($"{dialect.ParameterPrefix}{param.Name}", Convert(param, value)));
         }
 
+        if (template.Contains("@dry_run", StringComparison.Ordinal))
+            parameters.Add(($"{dialect.ParameterPrefix}dry_run", dryRun));
+
         return new RenderedTemplate(sql, parameters);
     }
 
+    // TryParse instead of Parse: a value typed by a person ("abc" in a number field) must come back as a
+    // 400 "Invalid parameters" naming the field, not as an unhandled FormatException (a generic 500).
     private static object Convert(OperationParameter param, string value) => param.Type switch
     {
-        OperationParameterType.Int => int.Parse(value),
-        OperationParameterType.Bool => bool.Parse(value),
+        OperationParameterType.Int => int.TryParse(value.Trim(), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var number)
+            ? number
+            : throw new TemplateRenderException($"Parameter '{param.Name}' must be a whole number."),
+        OperationParameterType.Bool => bool.TryParse(value.Trim(), out var flag)
+            ? flag
+            : throw new TemplateRenderException($"Parameter '{param.Name}' must be true or false."),
         _ => value,
     };
 }

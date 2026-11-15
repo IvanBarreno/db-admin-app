@@ -38,11 +38,14 @@ public interface IDatabaseEngine
     /// <summary>User databases available for pickers (system databases excluded).</summary>
     Task<IReadOnlyList<DatabaseInfo>> ListDatabasesAsync(DbConnection connection, CancellationToken ct);
 
-    /// <summary>Server-level principals (SQL/Windows/Entra logins) for pickers; system and certificate principals excluded.</summary>
-    Task<IReadOnlyList<LoginInfo>> ListLoginsAsync(DbConnection connection, CancellationToken ct);
+    /// <summary>The login this connection authenticated as (<c>ORIGINAL_LOGIN()</c>): the account the app works with.</summary>
+    Task<string?> GetConnectedLoginAsync(DbConnection connection, CancellationToken ct);
 
-    /// <summary>Users of the database the connection is currently pointed at, for pickers.</summary>
-    Task<IReadOnlyList<DatabaseUserInfo>> ListDatabaseUsersAsync(DbConnection connection, CancellationToken ct);
+    /// <summary>The server login a database user is mapped to (by SID) in the connection's database; null for none / contained users.</summary>
+    Task<string?> GetUserLoginAsync(DbConnection connection, string userName, CancellationToken ct);
+
+    /// <summary>True when the provider's error means "this login may not read/do that" (as opposed to a bug or a network problem).</summary>
+    bool IsPermissionError(DbException error);
 
     /// <summary>
     /// Subscribes to the provider's "informational message" event (T-SQL PRINT / RAISERROR
@@ -69,14 +72,3 @@ public sealed record DatabaseInfo(
     string State,     // ONLINE, RESTORING, OFFLINE, ...
     string? Owner,
     bool IsOnline);
-
-/// <summary>One server login as shown in a picker.</summary>
-public sealed record LoginInfo(
-    string Name,
-    string Type,        // SQL_LOGIN, WINDOWS_LOGIN, WINDOWS_GROUP, EXTERNAL_LOGIN, ...
-    bool IsDisabled);
-
-/// <summary>One database user as shown in a picker.</summary>
-public sealed record DatabaseUserInfo(
-    string Name,
-    string Type);       // SQL_USER, WINDOWS_USER, WINDOWS_GROUP, EXTERNAL_USER, ...

@@ -94,56 +94,40 @@ public abstract class SqlClientEngineBase : IDatabaseEngine
         return result;
     }
 
-    public async Task<IReadOnlyList<LoginInfo>> ListLoginsAsync(DbConnection connection, CancellationToken ct)
+    public async Task<string?> GetConnectedLoginAsync(DbConnection connection, CancellationToken ct)
     {
-        // Skip roles (R), certificate/asymmetric-key logins (C, K) and the built-in ##...## and
-        // NT SERVICE\ / NT AUTHORITY\ principals: nobody manages those by hand.
-        const string sql = """
-            SELECT name, type_desc, is_disabled
-            FROM sys.server_principals
-            WHERE type IN ('S', 'U', 'G', 'E', 'X')
-              AND name NOT LIKE '##%'
-              AND name NOT LIKE 'NT SERVICE\\%'
-              AND name NOT LIKE 'NT AUTHORITY\\%'
-            ORDER BY name;
-            """;
-
         await using var cmd = connection.CreateCommand();
-        cmd.CommandText = sql;
-
-        var result = new List<LoginInfo>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            result.Add(new LoginInfo(reader.GetString(0), reader.GetString(1), reader.GetBoolean(2)));
-        }
-
-        return result;
+        cmd.CommandText = "SELECT ORIGINAL_LOGIN();";
+        return await cmd.ExecuteScalarAsync(ct) as string;
     }
 
-    public async Task<IReadOnlyList<DatabaseUserInfo>> ListDatabaseUsersAsync(DbConnection connection, CancellationToken ct)
+    public async Task<string?> GetUserLoginAsync(DbConnection connection, string userName, CancellationToken ct)
     {
-        // principal_id > 4 skips dbo, guest, INFORMATION_SCHEMA and sys. Types: S/U/G/E/X as for logins.
-        const string sql = """
-            SELECT name, type_desc
-            FROM sys.database_principals
-            WHERE type IN ('S', 'U', 'G', 'E', 'X')
-              AND principal_id > 4
-            ORDER BY name;
-            """;
-
+        // Azure SQL rejects SUSER_SNAME(sid) inside a user database, so look the SID up in master-level views only where they exist.
         await using var cmd = connection.CreateCommand();
-        cmd.CommandText = sql;
-
-        var result = new List<DatabaseUserInfo>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
+        cmd.CommandText = UserLoginSql;
+        var p = cmd.CreateParameter();
+        p.ParameterName = "@u";
+        p.Value = userName;
+        cmd.Parameters.Add(p);
+        try
         {
-            result.Add(new DatabaseUserInfo(reader.GetString(0), reader.GetString(1)));
+            return await cmd.ExecuteScalarAsync(ct) as string;
         }
-
-        return result;
+        catch (SqlException)
+        {
+            return null; // e.g. Azure: no server catalog in a user database; the name itself is still compared
+        }
     }
+
+    /// <summary>T-SQL that maps a database user (by SID) to its server login name.</summary>
+    protected virtual string UserLoginSql =>
+        "SELECT SUSER_SNAME(sid) FROM sys.database_principals WHERE name = @u AND type IN ('S', 'U', 'G');";
+
+    // 229/230 = permission denied on object/column, 262 = on database, 297/300 = on server, 371/15151 = cannot
+    // see the object, 916 = login cannot use the database.
+    public bool IsPermissionError(DbException error) =>
+        error is SqlException { Number: 229 or 230 or 262 or 297 or 300 or 371 or 916 or 15151 };
 
     public IDisposable SubscribeToMessages(DbConnection connection, List<string> messages)
     {

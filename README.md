@@ -15,7 +15,7 @@ src/SqlAdmin.Core/                 contracts + pure logic (no framework dependen
 src/SqlAdmin.Engines.SqlServer/    IDatabaseEngine for SQL Server and Azure SQL
 src/SqlAdmin.Infrastructure/       config loading, YAML operation registry, EF Core audit store
 src/SqlAdmin.Api/                  the executable: HTTP endpoints, DI wiring, serves the UI
-tests/                             xUnit unit tests and Testcontainers integration tests
+tests/                             xUnit unit tests, integration tests (real API in memory), manual lab
 frontend/                          React app
 build/publish.ps1                  produces the single-file release
 ```
@@ -26,7 +26,7 @@ Dependency rule: `Api → Infrastructure → Core` and `Api → Engines.SqlServe
 
 - .NET SDK 9 or later
 - Node.js 22+ and **pnpm**
-- A SQL Server to test against (Developer Edition, LocalDB, or Docker)
+- A SQL Server to test against (Developer Edition, LocalDB, Docker, or a lab server on the network)
 
 ## Configure servers and secrets
 
@@ -68,6 +68,12 @@ pnpm dev
 ```
 
 Open http://localhost:5173. Interactive API docs are at http://127.0.0.1:5000/scalar/v1 while the API runs in Development.
+
+If the API stops at startup with `address already in use`, an older instance is still running on port 5000: stop it first. (On macOS, AirPlay Receiver also listens on port 5000 for `localhost`; use `127.0.0.1`.) To run a second copy on another port without touching the settings file:
+
+```bash
+Kestrel__Endpoints__Http__Url=http://127.0.0.1:5055 dotnet run --no-launch-profile
+```
 
 ### Regenerate frontend types after changing the API
 

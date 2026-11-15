@@ -30,7 +30,7 @@ public static class SnapshotWriter
 
         var dir = Path.Combine(baseDir, SafeFileName(serverName));
         Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, $"{SafeFileName(subject)}-{takenAtUtc:yyyyMMdd-HHmmss}.json");
+        var baseName = $"{SafeFileName(subject)}-{takenAtUtc:yyyyMMdd-HHmmss}";
 
         var document = new
         {
@@ -48,8 +48,29 @@ public static class SnapshotWriter
             }),
         };
 
-        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(document, Json), Encoding.UTF8, ct);
-        return path;
+        var json = JsonSerializer.Serialize(document, Json);
+
+        // A snapshot is rollback insurance, so an existing file is NEVER overwritten. Two runs for the same
+        // login in the same second get "name.json" and "name-2.json". FileMode.CreateNew makes the "does it
+        // exist?" test and the creation one atomic step: it throws IOException if the file is already there,
+        // which is safe even when two runs race (a File.Exists check followed by a write would not be).
+        for (var attempt = 1; ; attempt++)
+        {
+            var path = Path.Combine(dir, attempt == 1 ? $"{baseName}.json" : $"{baseName}-{attempt}.json");
+            try
+            {
+                // "await using" disposes (flushes + closes) the stream asynchronously at the end of the block.
+                await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                await using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+                await writer.WriteAsync(json.AsMemory(), ct);
+                return path;
+            }
+            catch (IOException) when (File.Exists(path) && attempt < 100)
+            {
+                // Name taken by an earlier snapshot: try the next suffix. Any other I/O error (disk full,
+                // no permission) does not match this filter and reaches the caller.
+            }
+        }
     }
 
     // Server/login names can hold characters that are invalid in file names (e.g. DOMAIN\user).

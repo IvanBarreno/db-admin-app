@@ -1,6 +1,6 @@
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config' // vite's defineConfig plus the typed `test` block
 
 // vite.config.ts — configuration for the Vite dev server and production build.
 // https://vite.dev/config/
@@ -20,6 +20,12 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:5000',
       '/openapi': 'http://127.0.0.1:5000',
     },
+  },
+
+  // `pnpm test` (Vitest): hooks and components render in a fake DOM (jsdom), no browser or server needed.
+  test: {
+    environment: 'jsdom',
+    include: ['src/**/*.test.{ts,tsx}'],
   },
 
   build: {

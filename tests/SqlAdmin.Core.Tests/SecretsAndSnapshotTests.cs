@@ -39,6 +39,59 @@ public class SecretGeneratorTests
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => SecretGenerator.GeneratePassword(8));
     }
+
+    [Theory]
+    [InlineData(12)]
+    [InlineData(64)]
+    [InlineData(128)]
+    public void Requested_length_is_honoured_across_the_allowed_range(int length)
+    {
+        Assert.Equal(length, SecretGenerator.GeneratePassword(new PasswordOptions(Length: length)).Length);
+    }
+
+    [Fact]
+    public void Too_long_length_is_rejected()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => SecretGenerator.GeneratePassword(new PasswordOptions(Length: 129)));
+    }
+
+    [Fact]
+    public void Only_the_chosen_classes_appear_and_each_chosen_class_is_present()
+    {
+        for (var i = 0; i < 200; i++)
+        {
+            var pw = SecretGenerator.GeneratePassword(new PasswordOptions(Length: 16, Upper: true, Lower: false, Digits: true, Symbols: false));
+
+            Assert.All(pw, c => Assert.True(char.IsUpper(c) || char.IsDigit(c)));
+            Assert.Contains(pw, char.IsUpper);
+            Assert.Contains(pw, char.IsDigit);
+        }
+    }
+
+    [Fact]
+    public void Lookalikes_can_be_allowed_but_quotes_and_backslash_never_are()
+    {
+        var seen = new HashSet<char>();
+        for (var i = 0; i < 400; i++)
+        {
+            foreach (var c in SecretGenerator.GeneratePassword(new PasswordOptions(Length: 32, ExcludeLookalikes: false)))
+                seen.Add(c);
+        }
+
+        Assert.Contains(seen, c => "0O1lI".Contains(c)); // allowed now
+        Assert.DoesNotContain(seen, c => "'\"\\".Contains(c)); // never
+    }
+
+    [Fact]
+    public void No_character_class_is_a_problem_and_fewer_than_three_classes_is_a_policy_warning()
+    {
+        Assert.NotNull(new PasswordOptions(Upper: false, Lower: false, Digits: false, Symbols: false).Problem);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            SecretGenerator.GeneratePassword(new PasswordOptions(Upper: false, Lower: false, Digits: false, Symbols: false)));
+
+        Assert.Null(new PasswordOptions().PolicyWarning);
+        Assert.NotNull(new PasswordOptions(Symbols: false, Digits: false).PolicyWarning);
+    }
 }
 
 public class GeneratedSecretsAndRedactionTests
@@ -72,6 +125,58 @@ public class GeneratedSecretsAndRedactionTests
 
         Assert.Equal("MyOwn#Pass1", values["password"]);
         Assert.Empty(generated);
+    }
+
+    // ---- generate_for_each: one password per item of a list parameter (bulk reset) -------------
+
+    private static OperationDefinition BulkOp() => new()
+    {
+        Id = "changes.reset_passwords", Name = "x", Category = "changes",
+        Scope = OperationScope.Server, Engines = ["sqlserver"], Sql = "SELECT 1;",
+        Params =
+        [
+            new OperationParameter { Name = "logins", Type = OperationParameterType.String, Source = "logins", Multi = true },
+            new OperationParameter { Name = "passwords", Type = OperationParameterType.Password, Required = false, GenerateForEach = "logins" },
+        ],
+    };
+
+    [Fact]
+    public void Each_item_of_the_list_gets_its_own_password_as_a_json_object()
+    {
+        var (values, generated) = OperationExecutor.ApplyGeneratedSecrets(
+            BulkOp(), new Dictionary<string, string?> { ["logins"] = """["alice","bob"]""" });
+
+        var perLogin = JsonSerializer.Deserialize<Dictionary<string, string>>(values["passwords"]!)!;
+        Assert.Equal(["alice", "bob"], perLogin.Keys.Order());
+        Assert.All(perLogin.Values, p => Assert.True(p.Length >= 12));
+        Assert.NotEqual(perLogin["alice"], perLogin["bob"]);
+
+        // Not in the "generated" dictionary: the script reports each password next to the login it was set for.
+        Assert.Empty(generated);
+    }
+
+    [Fact]
+    public void A_value_sent_by_the_caller_for_a_per_item_password_is_ignored()
+    {
+        var (values, _) = OperationExecutor.ApplyGeneratedSecrets(BulkOp(), new Dictionary<string, string?>
+        {
+            ["logins"] = """["alice"]""", ["passwords"] = """{"alice":"chosen-by-caller"}""",
+        });
+
+        Assert.DoesNotContain("chosen-by-caller", values["passwords"]);
+    }
+
+    [Fact]
+    public void Per_item_passwords_never_reach_the_audit_json()
+    {
+        var (values, _) = OperationExecutor.ApplyGeneratedSecrets(
+            BulkOp(), new Dictionary<string, string?> { ["logins"] = """["alice"]""" });
+        var secret = JsonSerializer.Deserialize<Dictionary<string, string>>(values["passwords"]!)!["alice"];
+
+        var json = OperationExecutor.RedactedParametersJson(BulkOp(), values);
+
+        Assert.DoesNotContain(secret, json);
+        Assert.Contains("alice", json); // the list of logins IS recorded
     }
 
     [Fact]
@@ -121,5 +226,31 @@ public class SnapshotWriterTests : IDisposable
         var row = doc.RootElement.GetProperty("resultSets")[0].GetProperty("rows")[0];
         Assert.Equal("dbcreator", row.GetProperty("server_role").GetString());
         Assert.Equal("offboarding.snapshot", doc.RootElement.GetProperty("operation").GetString());
+    }
+
+    [Fact]
+    public async Task Second_snapshot_in_the_same_second_gets_a_suffix_and_the_first_is_kept()
+    {
+        var op = new OperationDefinition
+        {
+            Id = "offboarding.snapshot", Name = "s", Category = "offboarding",
+            Scope = OperationScope.Server, Engines = ["sqlserver"], Sql = "SELECT 1;", SaveSnapshot = true,
+        };
+        var values = new Dictionary<string, string?> { ["login_name"] = "bob" };
+        var sameSecond = new DateTimeOffset(2026, 10, 19, 12, 30, 5, TimeSpan.Zero);
+
+        // Same server, login and second; only the content differs (before / after a change).
+        async Task<string> Write(string role) => await SnapshotWriter.WriteAsync(
+            dir, "srv", op, values, [new ResultSet(0, ["server_role"], [new object?[] { role }])], sameSecond, CancellationToken.None);
+
+        var first = await Write("sysadmin");
+        var second = await Write("dbcreator");
+        var third = await Write("public");
+
+        Assert.EndsWith("bob-20261019-123005.json", first);
+        Assert.EndsWith("bob-20261019-123005-2.json", second);
+        Assert.EndsWith("bob-20261019-123005-3.json", third);
+        Assert.Contains("sysadmin", await File.ReadAllTextAsync(first)); // the rollback reference was not overwritten
+        Assert.Contains("dbcreator", await File.ReadAllTextAsync(second));
     }
 }

@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using SqlAdmin.Api.Contracts;
 using SqlAdmin.Core.Config;
 using SqlAdmin.Core.Engines;
+using SqlAdmin.Core.Lookups;
+using SqlAdmin.Core.Operations;
 
 namespace SqlAdmin.Api.Endpoints;
 
@@ -73,24 +75,52 @@ public static class ServersEndpoints
             .WithName("ListDatabases")
             .WithSummary("User databases on the server, for pickers");
 
-        // GET /api/servers/{name}/logins
-        group.MapGet("/{name}/logins", async (string name, IServerConnectionFactory connections, CancellationToken ct) =>
+        // GET /api/servers/{name}/lookups/{id}?database=&login_name=...
+        // One endpoint for every picker/checklist/Explorer tab (lookups/*.yaml). `database` selects the
+        // database for database-scoped lookups; every other query value is offered to the lookup as an arg.
+        group.MapGet("/{name}/lookups/{id}", async Task<Results<Ok<LookupResult>, ProblemHttpResult>> (
+                string name,
+                string id,
+                HttpRequest http,
+                IServerCatalog catalog,
+                ILookupRegistry lookups,
+                IServerConnectionFactory connections,
+                CancellationToken ct) =>
             {
-                await using var conn = await connections.OpenAsync(name, database: null, ct);
-                return TypedResults.Ok(await conn.Engine.ListLoginsAsync(conn.Connection, ct));
-            })
-            .WithName("ListLogins")
-            .WithSummary("Server logins, for pickers");
+                var server = catalog.Find(name);
+                if (server is null)
+                {
+                    return TypedResults.Problem(statusCode: StatusCodes.Status404NotFound,
+                        title: "Unknown server", detail: $"Server '{name}' is not configured.");
+                }
 
-        // GET /api/servers/{name}/databases/{database}/users
-        // The database comes from the route, so the connection itself is opened against it.
-        group.MapGet("/{name}/databases/{database}/users", async (string name, string database, IServerConnectionFactory connections, CancellationToken ct) =>
-            {
-                await using var conn = await connections.OpenAsync(name, database, ct);
-                return TypedResults.Ok(await conn.Engine.ListDatabaseUsersAsync(conn.Connection, ct));
+                var query = http.Query.ToDictionary(q => q.Key, q => (string?)q.Value.ToString());
+                var database = query.GetValueOrDefault("database");
+
+                // Resolve the variant for this server's engine: needs the engine id, not a connection.
+                var lookup = lookups.Find(id, server.Engine);
+                if (lookup is null)
+                {
+                    return TypedResults.Problem(statusCode: StatusCodes.Status404NotFound,
+                        title: "Unknown lookup", detail: $"No lookup '{id}' for engine '{server.Engine}'.");
+                }
+
+                if (lookup.Scope == LookupScope.Database && string.IsNullOrWhiteSpace(database))
+                {
+                    return TypedResults.Problem(statusCode: StatusCodes.Status400BadRequest,
+                        title: "Database required", detail: $"Lookup '{id}' runs inside a database; pass ?database=.");
+                }
+
+                await using var conn = await connections.OpenAsync(name, lookup.DatabaseToOpen(database), ct);
+                var result = await LookupRunner.RunAsync(
+                    lookup, conn.Connection, conn.Engine, query, server.CommandTimeoutSeconds, ct);
+
+                // Principal lists (logins, users) flag the rows that are view-only: the app's own login etc.
+                result = await ProtectedPrincipals.AnnotateAsync(lookup, result, conn, ct);
+                return TypedResults.Ok(result);
             })
-            .WithName("ListDatabaseUsers")
-            .WithSummary("Users of one database, for pickers");
+            .WithName("RunLookup")
+            .WithSummary("Server-driven list for pickers, checklists and the Explorer");
 
         return app;
     }

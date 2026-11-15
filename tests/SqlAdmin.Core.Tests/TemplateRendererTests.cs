@@ -87,6 +87,20 @@ public class TemplateRendererTests
         Assert.Empty(result.Parameters);
     }
 
+    [Theory]
+    [InlineData("n", "abc", "whole number")]
+    [InlineData("n", "1.5", "whole number")]
+    [InlineData("b", "maybe", "true or false")]
+    public void Value_that_is_not_a_number_or_a_bool_is_rejected_naming_the_parameter(string name, string value, string expected)
+    {
+        var op = Op("SELECT @n, @b;", P("n", OperationParameterType.Int, required: false), P("b", OperationParameterType.Bool, required: false));
+
+        var ex = Assert.Throws<TemplateRenderException>(() => TemplateRenderer.Render(op, V((name, value)), new FakeDialect()));
+
+        Assert.Contains($"'{name}'", ex.Message);
+        Assert.Contains(expected, ex.Message);
+    }
+
     [Fact]
     public void Int_and_bool_values_are_converted()
     {

@@ -143,32 +143,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/servers/{name}/logins": {
+    "/api/servers/{name}/lookups/{id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Server logins, for pickers */
-        get: operations["ListLogins"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/servers/{name}/databases/{database}/users": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Users of one database, for pickers */
-        get: operations["ListDatabaseUsers"];
+        /** Server-driven list for pickers, checklists and the Explorer */
+        get: operations["RunLookup"];
         put?: never;
         post?: never;
         delete?: never;
@@ -228,6 +211,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Guided checklists and their steps */
+        get: operations["ListWorkflows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflows/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Render every selected step; nothing executes */
+        post: operations["PreviewWorkflow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflows/{id}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the selected steps in order against a server */
+        post: operations["ExecuteWorkflow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/secrets/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate a random password with the chosen length and character classes */
+        post: operations["GeneratePassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -257,6 +308,15 @@ export interface components {
         };
         /** @enum {unknown} */
         AuthMode: "Sql" | "Windows" | "EntraId";
+        CheckResult: {
+            id: string;
+            severity: components["schemas"]["CheckSeverity"];
+            ok: boolean;
+            message: string;
+            blocking?: boolean;
+        };
+        /** @enum {unknown} */
+        CheckSeverity: "Error" | "Warning";
         ConnectionTestResult: {
             success: boolean;
             /** Format: int64 */
@@ -291,9 +351,9 @@ export interface components {
             owner: string | null;
             isOnline: boolean;
         };
-        DatabaseUserInfo: {
-            name: string;
-            type: string;
+        DryRunStatement: {
+            database: string | null;
+            text: string;
         };
         EngineCapabilities: {
             supportsUseDatabase: boolean;
@@ -310,11 +370,62 @@ export interface components {
             rowCount: number;
             message: string | null;
         };
-        LoginInfo: {
-            name: string;
-            type: string;
-            isDisabled: boolean;
+        GeneratedPasswordResponse: {
+            password: string;
+            warning: string | null;
         };
+        GeneratePasswordRequest: {
+            /**
+             * Format: int32
+             * @default 20
+             */
+            length: number;
+            /** @default true */
+            upper: boolean;
+            /** @default true */
+            lower: boolean;
+            /** @default true */
+            digits: boolean;
+            /** @default true */
+            symbols: boolean;
+            /** @default true */
+            excludeLookalikes: boolean;
+        };
+        LockRule: {
+            column: string;
+            values: string[];
+            not: boolean;
+            reason: string;
+            ifParam: string | null;
+            ifValue: string | null;
+        };
+        LookupItem: {
+            value: string;
+            label: string;
+            extra: Record<string, never>;
+        };
+        LookupResult: {
+            items: components["schemas"]["LookupItem"][];
+            /** @default null */
+            warning: string | null;
+            /** @default null */
+            reason: string | null;
+            /** @default null */
+            requires: string | null;
+            /** @default null */
+            emptyText: string | null;
+        };
+        LookupResult2: {
+            items: components["schemas"]["LookupItem"][];
+            /** @default null */
+            warning: string | null;
+            /** @default null */
+            reason: string | null;
+            /** @default null */
+            requires: string | null;
+            /** @default null */
+            emptyText: string | null;
+        } | null;
         OperationExecuteResult: {
             success: boolean;
             /** Format: int64 */
@@ -340,6 +451,25 @@ export interface components {
             default?: string | null;
             choices?: string[] | null;
             generate?: boolean;
+            source?: string | null;
+            dependsOn?: string[] | null;
+            mustExist?: boolean;
+            multi?: boolean;
+            defaultAll?: boolean;
+            checklistGroup?: string | null;
+            checklistAction?: string | null;
+            suggest?: components["schemas"]["ParameterSuggestion"];
+            label?: string | null;
+            help?: string | null;
+            choiceHelp?: {
+                [key: string]: string;
+            } | null;
+            protect?: boolean;
+            advanced?: boolean;
+            prefixLookup?: string | null;
+            generateForEach?: string | null;
+            lockWhen?: components["schemas"]["LockRule"][] | null;
+            effectiveSource?: string | null;
         };
         /** @enum {unknown} */
         OperationParameterType: "Sysname" | "String" | "Int" | "Bool" | "Password" | "Choice" | "Database" | "Login" | "User";
@@ -352,6 +482,12 @@ export interface components {
             confirmToken: string | null;
             /** @default false */
             requiresServerName: boolean;
+            /** @default null */
+            checks: components["schemas"]["CheckResult"][] | null;
+            /** @default null */
+            statements: components["schemas"]["DryRunStatement"][] | null;
+            /** @default null */
+            resolvedBatches: string[] | null;
         };
         OperationRequest: {
             serverName: string;
@@ -373,7 +509,19 @@ export interface components {
             scope: components["schemas"]["OperationScope"];
             destructive: boolean;
             params: components["schemas"]["OperationParameter"][];
+            /** @default null */
+            description: string | null;
+            /** @default false */
+            readOnly: boolean;
         };
+        ParameterSuggestion: {
+            lookup: string;
+            column: string;
+            dependsOn: string[];
+            map: {
+                [key: string]: string;
+            };
+        } | null;
         PingResponse: {
             status: string;
             environment: string;
@@ -403,6 +551,77 @@ export interface components {
             defaultDatabase: string | null;
             tags: string[];
             capabilities: components["schemas"]["EngineCapabilities"];
+        };
+        WorkflowCheckResult: {
+            stepKey: string;
+            stepTitle: string;
+            result: components["schemas"]["CheckResult"];
+        };
+        WorkflowExecuteResult: {
+            success: boolean;
+            /** Format: int64 */
+            elapsedMs: number;
+            steps: components["schemas"]["WorkflowStepResult"][];
+            warnings: string[];
+        };
+        WorkflowPlannedStep: {
+            key: string;
+            title: string;
+            operationId: string;
+            destructive: boolean;
+            batches: string[];
+            /** @default null */
+            statements: components["schemas"]["DryRunStatement"][] | null;
+        };
+        WorkflowPreviewResult: {
+            workflowId: string;
+            steps: components["schemas"]["WorkflowPlannedStep"][];
+            destructive: boolean;
+            confirmToken: string | null;
+            requiresServerName: boolean;
+            checks: components["schemas"]["WorkflowCheckResult"][];
+            impact: components["schemas"]["LookupResult2"];
+        };
+        WorkflowRequest: {
+            serverName: string;
+            params: {
+                [key: string]: string;
+            };
+            steps: string[];
+            /** @default null */
+            confirmToken: string | null;
+            /** @default null */
+            confirmServerName: string | null;
+        };
+        WorkflowStepResult: {
+            key: string;
+            title: string;
+            operationId: string;
+            status: string;
+            /** Format: int64 */
+            elapsedMs: number;
+            resultSets: components["schemas"]["CustomSqlResultSet"][];
+            messages: string[];
+            error: string | null;
+            steps: components["schemas"]["ExecutionStepDto"][] | null;
+            snapshotPath: string | null;
+        };
+        WorkflowStepSummary: {
+            key: string;
+            title: string;
+            operationId: string;
+            required: boolean;
+            defaultOn: boolean;
+            needsNewOwner: boolean;
+            destructive: boolean;
+        };
+        WorkflowSummary: {
+            id: string;
+            name: string;
+            description: string;
+            params: components["schemas"]["OperationParameter"][];
+            steps: components["schemas"]["WorkflowStepSummary"][];
+            notes: string[];
         };
     };
     responses: never;
@@ -598,12 +817,13 @@ export interface operations {
             };
         };
     };
-    ListLogins: {
+    RunLookup: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 name: string;
+                id: string;
             };
             cookie?: never;
         };
@@ -615,30 +835,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LoginInfo"][];
-                };
-            };
-        };
-    };
-    ListDatabaseUsers: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                name: string;
-                database: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DatabaseUserInfo"][];
+                    "application/json": components["schemas"]["LookupResult"];
                 };
             };
         };
@@ -713,6 +910,102 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OperationExecuteResult"];
+                };
+            };
+        };
+    };
+    ListWorkflows: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowSummary"][];
+                };
+            };
+        };
+    };
+    PreviewWorkflow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowPreviewResult"];
+                };
+            };
+        };
+    };
+    ExecuteWorkflow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowExecuteResult"];
+                };
+            };
+        };
+    };
+    GeneratePassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GeneratePasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GeneratedPasswordResponse"];
                 };
             };
         };
