@@ -1,0 +1,225 @@
+# Database-level lookups: the connection is opened against the database the caller selected.
+
+lookups:
+  - id: users
+    name: "Database users"
+    scope: database
+    engines: [sqlserver]
+    principal: user
+    empty_text: "This database has no users besides dbo and guest."
+    sql: |
+      -- principal_id > 4 skips dbo, guest, INFORMATION_SCHEMA and sys.
+      -- is_orphan: a SQL user mapped to a login SID that no longer exists on the server.
+      SELECT dp.name AS value,
+             dp.type_desc AS type,
+             dp.default_schema_name,
+             SUSER_SNAME(dp.sid) AS login_name,
+             CAST(CASE WHEN dp.type = 'S'
+                        AND dp.authentication_type_desc = 'INSTANCE'
+                        AND NOT EXISTS (SELECT 1 FROM sys.server_principals sp WHERE sp.sid = dp.sid)
+                       THEN 1 ELSE 0 END AS bit) AS is_orphan
+      FROM sys.database_principals dp
+      WHERE dp.type IN ('S', 'U', 'G', 'E', 'X')
+        AND dp.principal_id > 4
+      ORDER BY dp.name;
+
+  - id: users
+    name: "Database users"
+    scope: database
+    engines: [azuresql]
+    principal: user
+    empty_text: "This database has no users besides dbo."
+    sql: |
+      -- No server catalog inside an Azure SQL database: no login mapping or orphan flag.
+      SELECT dp.name AS value,
+             dp.type_desc AS type,
+             dp.default_schema_name,
+             dp.authentication_type_desc AS authentication
+      FROM sys.database_principals dp
+      WHERE dp.type IN ('S', 'U', 'G', 'E', 'X')
+        AND dp.principal_id > 4
+      ORDER BY dp.name;
+
+  - id: database_roles
+    name: "Database roles"
+    scope: database
+    engines: [sqlserver, azuresql]
+    args: [user_name]
+    sql: |
+      -- Fixed and custom roles of this database. is_member is filled when a user_name is given.
+      -- "public" is left out; is_high_risk flags roles that grant control of the database.
+      SELECT r.name AS value,
+             r.is_fixed_role,
+             CASE r.name
+               WHEN 'db_owner'          THEN 'Full control of the database.'
+               WHEN 'db_securityadmin'  THEN 'Manages role membership and permissions in the database.'
+               WHEN 'db_accessadmin'    THEN 'Adds and removes users of the database.'
+               WHEN 'db_backupoperator' THEN 'Can back up the database.'
+               WHEN 'db_ddladmin'       THEN 'Can create, change and drop any object.'
+               WHEN 'db_datawriter'     THEN 'Can insert, update and delete data in every table.'
+               WHEN 'db_datareader'     THEN 'Can read data from every table and view.'
+               WHEN 'db_denydatawriter' THEN 'Cannot change data in any table (overrides grants).'
+               WHEN 'db_denydatareader' THEN 'Cannot read data from any table (overrides grants).'
+             END AS description,
+             CASE WHEN r.name IN ('db_owner', 'db_securityadmin', 'db_accessadmin', 'db_ddladmin') THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS is_high_risk,
+             (SELECT COUNT(*) FROM sys.database_role_members x WHERE x.role_principal_id = r.principal_id) AS member_count,
+             CASE WHEN @user_name IS NULL THEN NULL
+                  WHEN EXISTS (SELECT 1
+                               FROM sys.database_role_members m
+                               JOIN sys.database_principals u ON u.principal_id = m.member_principal_id
+                               WHERE m.role_principal_id = r.principal_id AND u.name = @user_name)
+                  THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS is_member
+      FROM sys.database_principals r
+      WHERE r.type = 'R' AND r.name <> 'public'
+      ORDER BY r.is_fixed_role DESC, r.name;
+
+  - id: schemas
+    name: "Schemas"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT s.name AS value,
+             p.name AS owner
+      FROM sys.schemas s
+      JOIN sys.database_principals p ON p.principal_id = s.principal_id
+      ORDER BY s.name;
+
+  - id: orphaned_users
+    name: "Orphaned users"
+    scope: database
+    engines: [sqlserver]
+    empty_text: "There are no orphaned users in this database."
+    sql: |
+      -- SQL users whose login SID is gone. suggested_login = a login with the same name, if any.
+      SELECT dp.name AS value,
+             CONVERT(varchar(100), dp.sid, 1) AS sid,
+             (SELECT TOP 1 sp.name FROM sys.server_principals sp WHERE sp.name = dp.name) AS suggested_login
+      FROM sys.database_principals dp
+      WHERE dp.type = 'S'
+        AND dp.authentication_type_desc = 'INSTANCE'
+        AND dp.principal_id > 4
+        AND dp.sid IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM sys.server_principals sp WHERE sp.sid = dp.sid)
+      ORDER BY dp.name;
+
+  # Objects of the selected database, for the Explorer. value = schema.name; user objects only.
+  - id: tables
+    name: "Tables"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT s.name + N'.' + o.name AS value, s.name AS [schema], o.name AS name,
+             COALESCE(USER_NAME(o.principal_id), USER_NAME(s.principal_id)) AS owner,
+             o.create_date, o.modify_date
+      FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id
+      WHERE o.type = 'U' AND o.is_ms_shipped = 0
+      ORDER BY s.name, o.name;
+
+  - id: views
+    name: "Views"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT s.name + N'.' + o.name AS value, s.name AS [schema], o.name AS name,
+             COALESCE(USER_NAME(o.principal_id), USER_NAME(s.principal_id)) AS owner,
+             o.create_date, o.modify_date
+      FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id
+      WHERE o.type = 'V' AND o.is_ms_shipped = 0
+      ORDER BY s.name, o.name;
+
+  - id: procedures
+    name: "Stored procedures"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT s.name + N'.' + o.name AS value, s.name AS [schema], o.name AS name,
+             COALESCE(USER_NAME(o.principal_id), USER_NAME(s.principal_id)) AS owner,
+             o.create_date, o.modify_date
+      FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id
+      WHERE o.type = 'P' AND o.is_ms_shipped = 0
+      ORDER BY s.name, o.name;
+
+  - id: functions
+    name: "Functions"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT s.name + N'.' + o.name AS value, s.name AS [schema], o.name AS name, o.type_desc AS type,
+             COALESCE(USER_NAME(o.principal_id), USER_NAME(s.principal_id)) AS owner,
+             o.create_date, o.modify_date
+      FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id
+      WHERE o.type IN ('FN', 'IF', 'TF') AND o.is_ms_shipped = 0
+      ORDER BY s.name, o.name;
+
+  # Everything a permission can be granted ON, in one list (tables, views, procedures, functions), for the
+  # "object permissions" operation. `type` says what kind it is: the permissions that apply depend on it.
+  - id: securables
+    name: "Tables, views, procedures and functions"
+    scope: database
+    engines: [sqlserver, azuresql]
+    empty_text: "This database has no user tables, views, procedures or functions."
+    sql: |
+      SELECT s.name + N'.' + o.name AS value,
+             CASE WHEN o.type = 'U' THEN N'TABLE'
+                  WHEN o.type = 'V' THEN N'VIEW'
+                  WHEN o.type IN ('P', 'PC') THEN N'PROCEDURE'
+                  WHEN o.type IN ('FN', 'FS') THEN N'SCALAR FUNCTION'
+                  ELSE N'TABLE FUNCTION' END AS type,
+             COALESCE(USER_NAME(o.principal_id), USER_NAME(s.principal_id)) AS owner
+      FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id
+      WHERE o.type IN ('U', 'V', 'P', 'PC', 'FN', 'FS', 'IF', 'TF', 'FT') AND o.is_ms_shipped = 0
+      ORDER BY s.name, o.name;
+
+  # Schemas a DBA would grant on: the user-made ones and dbo (not sys, INFORMATION_SCHEMA, guest or the
+  # schemas of the fixed database roles, ids 16384-16399).
+  - id: user_schemas
+    name: "Schemas (user)"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT s.name AS value, p.name AS owner
+      FROM sys.schemas s
+      JOIN sys.database_principals p ON p.principal_id = s.principal_id
+      WHERE s.schema_id < 16384 AND s.name NOT IN (N'sys', N'INFORMATION_SCHEMA', N'guest')
+      ORDER BY s.name;
+
+  # The object-level permissions this engine version knows (from the engine itself, not a fixed list).
+  - id: object_permissions
+    name: "Object permissions"
+    scope: database
+    engines: [sqlserver, azuresql]
+    sql: |
+      SELECT DISTINCT permission_name AS value
+      FROM sys.fn_builtin_permissions('OBJECT')
+      ORDER BY permission_name;
+
+  # Feeds the side-by-side comparison of "Clone database access" (same shape as the server_access lookup):
+  # one row per database role the user is in and per explicit permission (database, schema, object, column).
+  # CONNECT is left out, as the clone skips it (a user always needs it).
+  - id: database_access
+    name: "Database roles and explicit permissions of a user"
+    scope: database
+    engines: [sqlserver, azuresql]
+    args: [user_name]
+    empty_text: "This user holds no database roles or explicit permissions."
+    sql: |
+      -- COLLATE: names come from catalogs with different collations (UNION would fail otherwise).
+      SELECT CAST(N'ROLE:' + r.name AS nvarchar(700)) COLLATE DATABASE_DEFAULT AS value, 'ROLE' AS kind,
+             CAST(r.name AS nvarchar(700)) COLLATE DATABASE_DEFAULT AS item,
+             CAST('MEMBER' AS nvarchar(60)) COLLATE DATABASE_DEFAULT AS state
+      FROM sys.database_role_members m
+      JOIN sys.database_principals r ON r.principal_id = m.role_principal_id
+      WHERE m.member_principal_id = DATABASE_PRINCIPAL_ID(@user_name)
+      UNION ALL
+      SELECT CAST(N'PERMISSION:' + p.permission_name + N' ON ' + t.label AS nvarchar(700)) COLLATE DATABASE_DEFAULT, 'PERMISSION',
+             CAST(p.permission_name + N' ON ' + t.label AS nvarchar(700)) COLLATE DATABASE_DEFAULT,
+             CAST(p.state_desc AS nvarchar(60)) COLLATE DATABASE_DEFAULT
+      FROM sys.database_permissions p
+      CROSS APPLY (SELECT CASE p.class
+          WHEN 0 THEN N'DATABASE'
+          WHEN 1 THEN OBJECT_SCHEMA_NAME(p.major_id) + N'.' + OBJECT_NAME(p.major_id)
+                      + ISNULL(N' (' + COL_NAME(p.major_id, p.minor_id) + N')', N'')
+          WHEN 3 THEN N'SCHEMA ' + SCHEMA_NAME(p.major_id) END AS label) t
+      WHERE p.grantee_principal_id = DATABASE_PRINCIPAL_ID(@user_name) AND p.class IN (0, 1, 3)
+        AND NOT (p.class = 0 AND p.permission_name = N'CONNECT')
+      ORDER BY 2, 3;

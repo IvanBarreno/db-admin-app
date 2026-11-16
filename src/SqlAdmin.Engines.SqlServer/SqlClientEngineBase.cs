@@ -60,12 +60,18 @@ public abstract class SqlClientEngineBase : IDatabaseEngine
             IsSysAdmin: reader.GetInt32(5) == 1);
     }
 
+    /// <summary>
+    /// T-SQL expression that yields a database's owner name. SUSER_SNAME(owner_sid) maps the SID to a
+    /// login name (NULL when unknown, e.g. after a restore). Azure SQL rejects SUSER_SNAME with an
+    /// argument ("cannot be invoked with parameters in this version of SQL Server"), so it overrides this.
+    /// </summary>
+    protected virtual string DatabaseOwnerExpression => "SUSER_SNAME(owner_sid)";
+
     public async Task<IReadOnlyList<DatabaseInfo>> ListDatabasesAsync(DbConnection connection, CancellationToken ct)
     {
-        // database_id 1-4 are master, tempdb, model, msdb. SUSER_SNAME(owner_sid) maps the
-        // owner SID to a login name (NULL when the SID is unknown, e.g. after a restore).
-        const string sql = """
-            SELECT name, state_desc, SUSER_SNAME(owner_sid) AS owner_name, state
+        // database_id 1-4 are master, tempdb, model, msdb.
+        var sql = $"""
+            SELECT name, state_desc, {DatabaseOwnerExpression} AS owner_name, state
             FROM sys.databases
             WHERE database_id > 4
             ORDER BY name;
@@ -87,6 +93,41 @@ public abstract class SqlClientEngineBase : IDatabaseEngine
 
         return result;
     }
+
+    public async Task<string?> GetConnectedLoginAsync(DbConnection connection, CancellationToken ct)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT ORIGINAL_LOGIN();";
+        return await cmd.ExecuteScalarAsync(ct) as string;
+    }
+
+    public async Task<string?> GetUserLoginAsync(DbConnection connection, string userName, CancellationToken ct)
+    {
+        // Azure SQL rejects SUSER_SNAME(sid) inside a user database, so look the SID up in master-level views only where they exist.
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = UserLoginSql;
+        var p = cmd.CreateParameter();
+        p.ParameterName = "@u";
+        p.Value = userName;
+        cmd.Parameters.Add(p);
+        try
+        {
+            return await cmd.ExecuteScalarAsync(ct) as string;
+        }
+        catch (SqlException)
+        {
+            return null; // e.g. Azure: no server catalog in a user database; the name itself is still compared
+        }
+    }
+
+    /// <summary>T-SQL that maps a database user (by SID) to its server login name.</summary>
+    protected virtual string UserLoginSql =>
+        "SELECT SUSER_SNAME(sid) FROM sys.database_principals WHERE name = @u AND type IN ('S', 'U', 'G');";
+
+    // 229/230 = permission denied on object/column, 262 = on database, 297/300 = on server, 371/15151 = cannot
+    // see the object, 916 = login cannot use the database.
+    public bool IsPermissionError(DbException error) =>
+        error is SqlException { Number: 229 or 230 or 262 or 297 or 300 or 371 or 916 or 15151 };
 
     public IDisposable SubscribeToMessages(DbConnection connection, List<string> messages)
     {

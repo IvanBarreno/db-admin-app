@@ -1,8 +1,16 @@
 <!--
   SqlAdmin.Integration.Tests
   ==========================
-  Slower tests that talk to a REAL SQL Server (via Testcontainers in Docker, added in Phase 4).
+  Slower tests that start the REAL API in memory (WebApplicationFactory) and call it over HTTP.
   Kept separate from unit tests so `dotnet test tests/SqlAdmin.Core.Tests` stays instant.
+
+  Two kinds of test live here:
+    - [Fact]        needs no SQL Server: error shapes (ProblemDetails), routing, validation.
+    - [ServerFact]  talks to a real SQL Server and is SKIPPED unless you opt in:
+                      SQLADMIN_TEST_SERVER=IB_LocalSQL dotnet test tests/SqlAdmin.Integration.Tests
+                    (the name must exist in servers.json and must not be a Production server).
+  The original plan used Testcontainers (SQL Server in Docker); this dev machine has no Docker, so the
+  tests run against a lab server instead. They only create objects named zz_it_* and remove them again.
 -->
 <Project Sdk="Microsoft.NET.Sdk">
 
@@ -13,6 +21,8 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <!-- WebApplicationFactory<T>: hosts the API on an in-memory test server, no port, no Kestrel -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.*" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
@@ -23,9 +33,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\SqlAdmin.Core\SqlAdmin.Core.csproj" />
-    <ProjectReference Include="..\..\src\SqlAdmin.Engines.SqlServer\SqlAdmin.Engines.SqlServer.csproj" />
-    <ProjectReference Include="..\..\src\SqlAdmin.Infrastructure\SqlAdmin.Infrastructure.csproj" />
+    <!-- The app under test. Referencing it also brings Core, Infrastructure and the SQL Server engine. -->
+    <ProjectReference Include="..\..\src\SqlAdmin.Api\SqlAdmin.Api.csproj" />
   </ItemGroup>
 
 </Project>

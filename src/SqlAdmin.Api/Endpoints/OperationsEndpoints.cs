@@ -1,0 +1,207 @@
+using System.Diagnostics;
+using Microsoft.AspNetCore.Http.HttpResults;
+using SqlAdmin.Api.Contracts;
+using SqlAdmin.Core.Audit;
+using SqlAdmin.Core.Config;
+using SqlAdmin.Core.Engines;
+using SqlAdmin.Core.Execution;
+using SqlAdmin.Core.Lookups;
+using SqlAdmin.Core.Operations;
+
+namespace SqlAdmin.Api.Endpoints;
+
+/// <summary>/api/operations — the registered operation catalog: list, preview, execute.</summary>
+public static class OperationsEndpoints
+{
+    public static IEndpointRouteBuilder MapOperationsEndpoints(this IEndpointRouteBuilder app)
+    {
+        var group = app.MapGroup("/api/operations").WithTags("Operations");
+
+        // GET /api/operations?server={name}
+        // Filtered to the server's engine, so the UI never offers an operation the server can't run.
+        group.MapGet("/", Results<Ok<List<OperationSummary>>, ProblemHttpResult> (
+                string server,
+                IOperationRegistry registry,
+                IServerCatalog catalog,
+                IEngineRegistry engines) =>
+            {
+                var serverDef = catalog.Find(server);
+                if (serverDef is null) return UnknownServer(server);
+
+                var engineId = engines.Get(serverDef.Engine).Id;
+                var list = registry.ForEngine(engineId).Select(OperationSummary.From).ToList();
+                return TypedResults.Ok(list);
+            })
+            .WithName("ListOperations")
+            .WithSummary("Operations available for a server, filtered by its engine");
+
+        // POST /api/operations/{id}/preview
+        group.MapPost("/{id}/preview", async Task<Results<Ok<OperationPreviewResult>, ProblemHttpResult>> (
+                string id,
+                OperationRequest request,
+                IOperationRegistry registry,
+                IServerCatalog catalog,
+                IEngineRegistry engines,
+                ILookupRegistry lookups,
+                IServerConnectionFactory connections,
+                DestructiveGuard guard,
+                CancellationToken ct) =>
+            {
+                var operation = registry.Find(id);
+                if (operation is null) return UnknownOperation(id);
+
+                var serverDef = catalog.Find(request.ServerName);
+                if (serverDef is null) return UnknownServer(request.ServerName);
+
+                // List parameters become canonical (distinct, sorted) so the token binds to the selection itself.
+                request = request with { Params = MultiValues.Normalize(operation.Params, request.Params) };
+
+                // A TemplateRenderException (missing/invalid parameter) becomes a 400 ProblemDetails
+                // in DomainExceptionHandler, so no try/catch is needed here.
+                var plan = OperationExecutor.Plan(operation, request.Params, engines.Get(serverDef.Engine).Dialect);
+
+                // Passwords typed per login (bulk create / reset) are checked now, so a too-long one is a 400
+                // here and not a surprise after the confirm step. Nothing is generated during a preview.
+                OperationExecutor.ValidatePerItemSecrets(operation, request.Params);
+
+                // must_exist parameters are checked against the server's own lists (400 if not found).
+                await MustExistValidator.ValidateAsync(
+                    operation, request.Params, request.ServerName, request.Database, lookups, connections, ct);
+
+                // Preflight: read-only validations against the real server state.
+                var checks = (await PreflightRunner.RunAsync(
+                    operation, request.Params, request.ServerName, request.Database, connections, ct)).ToList();
+
+                // Dry run: ask the script itself for the statements it would execute. If the script fails
+                // here (a guard THROW, a missing object) the real run fails the same way, so it blocks.
+                var dryRun = await DryRunRunner.RunAsync(
+                    operation, request.Params, request.ServerName, request.Database, connections, ct);
+                if (dryRun?.Error is { } dryRunError)
+                    checks.Add(new CheckResult("dry_run", CheckSeverity.Error, false, dryRunError));
+
+                // Destructive for these values: hand back the token that /execute will demand — but never
+                // while a blocking check fails, so the UI cannot even offer "Confirm and execute".
+                var destructive = operation.RequiresConfirmation(request.Params);
+                var token = destructive && !checks.Any(c => c.Blocking)
+                    ? guard.IssueToken(operation, request.ServerName, request.Database, request.Params)
+                    : null;
+                // Scripts with a dry run already show their real statements. The others (mostly audits) get the
+                // template with the values written in, so the DBA reads "= N'alice'" instead of "= @login_name".
+                var resolved = operation.SupportsDryRun
+                    ? null
+                    : SqlDisplay.Batches(operation, request.Params, engines.Get(serverDef.Engine).Dialect);
+
+                return TypedResults.Ok(new OperationPreviewResult(
+                    plan.OperationId, plan.Batches, destructive, token, destructive && serverDef.IsProduction, checks,
+                    dryRun?.Statements, resolved));
+            })
+            .WithName("PreviewOperation")
+            .WithSummary("Render the operation's template; nothing executes");
+
+        // POST /api/operations/{id}/execute
+        group.MapPost("/{id}/execute", async Task<Results<Ok<OperationExecuteResult>, ProblemHttpResult>> (
+                string id,
+                OperationRequest request,
+                IOperationRegistry registry,
+                IServerConnectionFactory connections,
+                ILookupRegistry lookups,
+                IServerCatalog catalog,
+                IEngineRegistry engines,
+                IAuditStore auditStore,
+                DestructiveGuard guard,
+                IWebHostEnvironment env,
+                CancellationToken ct) =>
+            {
+                var operation = registry.Find(id);
+                if (operation is null) return UnknownOperation(id);
+
+                var serverDef = catalog.Find(request.ServerName);
+                if (serverDef is null) return UnknownServer(request.ServerName);
+
+                var stopwatch = Stopwatch.StartNew();
+                request = request with { Params = MultiValues.Normalize(operation.Params, request.Params) };
+
+                // Destructive for these values? Then the previewed token (and, on Production, the typed
+                // server name) must match this exact request. 428 via DomainExceptionHandler otherwise.
+                // Checked against the values as the DBA sent them — generated passwords come after.
+                if (operation.RequiresConfirmation(request.Params))
+                {
+                    guard.Validate(operation, serverDef, request.Database, request.Params,
+                        request.ConfirmToken, request.ConfirmServerName);
+                }
+
+                // Blank "generate" password fields get a random password; it is returned once below.
+                var (values, generated) = OperationExecutor.ApplyGeneratedSecrets(operation, request.Params);
+
+                // Re-check right before running: the server may have changed since the preview.
+                await MustExistValidator.ValidateAsync(
+                    operation, request.Params, request.ServerName, request.Database, lookups, connections, ct);
+                PreflightRunner.ThrowIfBlocking(await PreflightRunner.RunAsync(
+                    operation, request.Params, request.ServerName, request.Database, connections, ct));
+
+                // Render first: bad parameters fail fast (400 via DomainExceptionHandler) without
+                // opening a connection or writing an audit row.
+                var plan = OperationExecutor.Plan(operation, values, engines.Get(serverDef.Engine).Dialect);
+
+                var run = await OperationRunner.RunAsync(
+                    operation, values, request.ServerName, request.Database,
+                    connections, Path.Combine(env.ContentRootPath, "snapshots"), ct);
+                var scriptResult = run.Script;
+                var steps = run.DatabaseSteps?
+                    .Select(s => new ExecutionStepDto(s.Database, s.Status, s.RowCount, s.Message)).ToList();
+                var snapshotPath = run.SnapshotPath;
+
+                var response = new OperationExecuteResult(
+                    Success: !scriptResult.Failed,
+                    ElapsedMs: stopwatch.ElapsedMilliseconds,
+                    ResultSets: scriptResult.ResultSets
+                        .Select(rs => new CustomSqlResultSet(rs.BatchIndex, rs.Columns, rs.Rows))
+                        .ToList(),
+                    Messages: scriptResult.Messages,
+                    FailedBatchIndex: scriptResult.FailedBatchIndex,
+                    Error: scriptResult.Error,
+                    Steps: steps,
+                    // Only hand back a generated password if the run succeeded; after a failure
+                    // (e.g. login already exists) it was never set, so showing it would mislead.
+                    GeneratedPasswords: generated.Count > 0 && !scriptResult.Failed ? generated : null,
+                    SnapshotPath: snapshotPath);
+
+                await auditStore.RecordAsync(new AuditEntry
+                {
+                    ExecutedAtUtc = DateTimeOffset.UtcNow,
+                    ExecutedBy = Environment.UserName,
+                    ServerName = request.ServerName,
+                    Database = request.Database,
+                    Sql = $"[{operation.Id}]\n" + string.Join("\nGO\n", plan.Batches),
+                    Status = response.Success ? "Success" : "Failed",
+                    Detail = response.Error,
+                    // Password-typed values (including generated ones) are stored as "***".
+                    ParametersJson = OperationExecutor.RedactedParametersJson(operation, values),
+                    Steps = (steps ?? []).Select((s, i) => new AuditStep
+                    {
+                        StepNo = i + 1,
+                        Database = s.Database,
+                        Action = operation.Id,
+                        Status = s.Status,
+                        RowsAffected = s.RowCount,
+                        Message = s.Message,
+                        ExecutedAtUtc = DateTimeOffset.UtcNow,
+                    }).ToList(),
+                }, ct);
+
+                return TypedResults.Ok(response);
+            })
+            .WithName("ExecuteOperation")
+            .WithSummary("Run the operation against a server (and optional database)");
+
+        return app;
+    }
+
+    // 404s as RFC 7807 bodies with a detail the UI can show ("Operation 'x' does not exist"),
+    // instead of the empty body TypedResults.NotFound() would produce.
+    private static ProblemHttpResult UnknownOperation(string id) =>
+        TypedResults.Problem(title: "Operation not found", detail: $"Operation '{id}' does not exist.", statusCode: StatusCodes.Status404NotFound);
+
+    private static ProblemHttpResult UnknownServer(string name) =>
+        TypedResults.Problem(title: "Server not found", detail: $"Server '{name}' is not configured.", statusCode: StatusCodes.Status404NotFound);
+}

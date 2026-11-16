@@ -5,9 +5,13 @@ using Microsoft.Extensions.Options;
 using SqlAdmin.Core.Audit;
 using SqlAdmin.Core.Config;
 using SqlAdmin.Core.Engines;
+using SqlAdmin.Core.Lookups;
+using SqlAdmin.Core.Operations;
 using SqlAdmin.Infrastructure.Audit;
 using SqlAdmin.Infrastructure.Config;
 using SqlAdmin.Infrastructure.Engines;
+using SqlAdmin.Infrastructure.Lookups;
+using SqlAdmin.Infrastructure.Operations;
 
 namespace SqlAdmin.Infrastructure;
 
@@ -33,6 +37,17 @@ public static class DependencyInjection
         services.AddSingleton<ISecretResolver, ConfigurationSecretResolver>();
         services.AddSingleton<IEngineRegistry, EngineRegistry>();
         services.AddSingleton<IServerConnectionFactory, ServerConnectionFactory>();
+
+        // --- Operation catalog: YAML files under operations/, loaded once at startup ---
+        var operationsDirectory = configuration["Operations:Directory"] ?? "operations";
+        services.AddSingleton<IOperationRegistry>(_ => new OperationRegistry(operationsDirectory));
+
+        // --- Lookups: server-driven lists for pickers, YAML files under lookups/, loaded once ---
+        var lookupsDirectory = configuration["Lookups:Directory"] ?? "lookups";
+        services.AddSingleton<ILookupRegistry>(_ => new LookupRegistry(lookupsDirectory));
+
+        // Singleton: the confirm-token key lives in memory for the life of the process.
+        services.AddSingleton<DestructiveGuard>();
 
         // --- Audit log: SQLite next to the exe, one file, append-only ---
         var auditDbPath = configuration["AuditDb:Path"] ?? "audit.db";

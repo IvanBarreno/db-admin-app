@@ -60,6 +60,12 @@ public sealed record ServerDefinition
 
     public IReadOnlyList<string> Tags { get; init; } = [];
 
+    /// <summary>
+    /// Logins the app refuses to modify on this server (view only), besides the login it connects with
+    /// (which is always protected). See <see cref="Operations.ProtectedPrincipals"/>.
+    /// </summary>
+    public IReadOnlyList<string> ProtectedLogins { get; init; } = [];
+
     /// <summary>TLS on the wire. Should be true everywhere; Azure SQL enforces it.</summary>
     public bool Encrypt { get; init; } = true;
 

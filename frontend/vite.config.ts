@@ -1,13 +1,13 @@
 import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config' // vite's defineConfig plus the typed `test` block
 
 // vite.config.ts — configuration for the Vite dev server and production build.
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(), // JSX + Fast Refresh (hot reload that keeps component state)
-    tailwindcss(), // Tailwind v4 as a Vite plugin: no tailwind.config.js or postcss.config.js needed
+    // Styling is Mantine: its CSS is imported in main.tsx, and postcss.config.cjs (picked up by Vite on its
+    // own) adds the helpers used in *.module.css files. No CSS plugin is needed here.
   ],
 
   server: {
@@ -20,6 +20,14 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:5000',
       '/openapi': 'http://127.0.0.1:5000',
     },
+  },
+
+  // `pnpm test` (Vitest): hooks and components render in a fake DOM (jsdom), no browser or server needed.
+  test: {
+    environment: 'jsdom',
+    include: ['src/**/*.test.{ts,tsx}'],
+    // Stand-ins for the browser APIs jsdom lacks and Mantine needs (matchMedia, ResizeObserver...).
+    setupFiles: './src/test/setup.ts',
   },
 
   build: {

@@ -1,0 +1,321 @@
+# operations/offboarding.yaml — remove a person's access (§2 "Offboarding").
+#
+# Run these IN ORDER from the Operations page; each step is optional and independent:
+#   1. offboarding.snapshot            read-only report: what the login has today (rollback reference)
+#   2. changes.set_login_enabled       DISABLE (stops new connections, keeps everything restorable)
+#   3. offboarding.kill_sessions
+#   4. offboarding.reassign_jobs
+#   5. offboarding.reassign_databases
+#   6. offboarding.revoke_server_access
+#   7. offboarding.drop_users          every online database (fixes schema ownership first)
+#   8. offboarding.drop_login          re-checks that nothing still depends on the login
+#
+# Everything here is destructive: preview returns a confirm token, and on a Production server
+# the DBA must type the server name. Same dynamic-SQL pattern as changes.yaml (QUOTENAME + EXEC).
+# Some steps need sysadmin (job/database ownership, dropping sysadmin membership).
+# T-SQL NOT yet run against a real server.
+
+operations:
+  - id: offboarding.snapshot
+    name: "1. Snapshot a login's access (read-only)"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: false
+    read_only: true         # only reads: allowed even for a protected login (view-only)
+    save_snapshot: true     # also written to snapshots/{server}/{login}-{timestamp}.json
+    params:
+      - name: login_name
+        type: login
+        required: true
+    checks:
+      - id: login_exists
+        message: "The login does not exist, so there is nothing to snapshot."
+        sql: |
+          SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @login_name);
+    sql: |
+      -- Result set 1: the login itself.
+      SELECT name AS login_name, type_desc, is_disabled, default_database_name, create_date
+      FROM sys.server_principals WHERE name = @login_name;
+
+      -- Result set 2: server roles.
+      SELECT r.name AS server_role
+      FROM sys.server_role_members srm
+      JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+      JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+      WHERE m.name = @login_name ORDER BY r.name;
+
+      -- Result set 3: explicit server permissions.
+      SELECT permission_name, state_desc
+      FROM sys.server_permissions
+      WHERE grantee_principal_id = SUSER_ID(@login_name) ORDER BY permission_name;
+
+      -- Result set 4: databases owned.
+      SELECT name AS owned_database FROM sys.databases WHERE owner_sid = SUSER_SID(@login_name);
+
+      -- Result set 5: SQL Agent jobs owned.
+      SELECT j.name AS owned_job, j.enabled
+      FROM msdb.dbo.sysjobs j WHERE j.owner_sid = SUSER_SID(@login_name);
+
+      -- Result set 6: active sessions.
+      SELECT session_id, host_name, program_name, status, login_time
+      FROM sys.dm_exec_sessions WHERE login_name = @login_name AND is_user_process = 1;
+
+  - id: offboarding.kill_sessions
+    name: "3. Kill active sessions of a login"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+      # Which sessions to kill (host / program shown in the list). Nothing ticked in the form is sent as
+      # "(none)" and kills nothing; an empty list (an API call that omits it) means every session of the login.
+      # No must_exist: sessions come and go between preview and execute, and the script only touches live ones.
+      - name: sessions
+        type: string
+        source: sessions
+        depends_on: [login_name]
+        multi: true
+        default_all: true
+        required: false
+    sql: |
+      DECLARE @sql nvarchar(max) = N'';
+      -- One KILL per line, so a dry run reads as a list.
+      SELECT @sql += N'KILL ' + CAST(session_id AS nvarchar(10)) + N';' + NCHAR(10)
+      FROM sys.dm_exec_sessions
+      WHERE login_name = @login_name AND is_user_process = 1 AND session_id <> @@SPID
+        AND (NOT EXISTS (SELECT 1 FROM OPENJSON(@sessions))
+             OR CAST(session_id AS nvarchar(10)) IN (SELECT value FROM OPENJSON(@sessions)));
+      {{exec:@sql}};
+      -- KILL returns at once, but the session stays in sys.dm_exec_sessions until SQL Server has finished
+      -- cleaning it up (longer when it must roll back work). Wait up to 5 s for the chosen sessions to go,
+      -- so the count below is true and the next offboarding step (drop login) does not find a ghost session.
+      DECLARE @tries int = 0;
+      WHILE @dry_run = 0 AND @tries < 25 AND EXISTS (
+              SELECT 1 FROM sys.dm_exec_sessions
+              WHERE login_name = @login_name AND is_user_process = 1 AND session_id <> @@SPID
+                AND (NOT EXISTS (SELECT 1 FROM OPENJSON(@sessions))
+                     OR CAST(session_id AS nvarchar(10)) IN (SELECT value FROM OPENJSON(@sessions))))
+      BEGIN
+        WAITFOR DELAY '00:00:00.200';
+        SET @tries += 1;
+      END;
+      SELECT COUNT(*) AS sessions_remaining
+      FROM sys.dm_exec_sessions
+      WHERE login_name = @login_name AND is_user_process = 1;
+
+  - id: offboarding.reassign_jobs
+    name: "4. Reassign SQL Agent jobs to another login"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+      # protect: false — the new owner only RECEIVES the jobs, so even a protected login may be chosen here.
+      - name: new_owner
+        type: login
+        required: true
+        must_exist: true
+        protect: false
+        label: "New owner of the jobs"
+        help: "The login that will own the SQL Agent jobs handed over. It must exist, be enabled, and differ from the login being offboarded."
+      # Which of the login's jobs to hand over; untick the ones that should stay (or be handled by hand).
+      - name: jobs
+        type: string
+        source: jobs
+        depends_on: [login_name]
+        multi: true
+        default_all: true
+        required: false
+        must_exist: true
+    checks:
+      - id: owner_differs
+        message: "The new owner is the same login being offboarded."
+        sql: |
+          SELECT 1 WHERE @new_owner = @login_name;
+      - id: owner_enabled
+        message: "The new owner login is disabled; pick an enabled login."
+        sql: |
+          SELECT 1 WHERE EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @new_owner AND is_disabled = 1);
+      - id: agent_reachable
+        message: "No EXECUTE permission on msdb.dbo.sp_manage_jobs_by_login: SQL Agent / msdb is not reachable with this login."
+        sql: |
+          SELECT 1 WHERE ISNULL(HAS_PERMS_BY_NAME('msdb.dbo.sp_manage_jobs_by_login', 'OBJECT', 'EXECUTE'), 0) = 0;
+    sql: |
+      -- One sp_update_job per job, so the DBA can hand over only the ticked ones (sp_manage_jobs_by_login
+      -- moves all of them). Built as text so a dry run shows the exact calls (names become N'...' literals).
+      DECLARE @sql nvarchar(max) = N'';
+      SELECT @sql += N'EXEC msdb.dbo.sp_update_job @job_name = N' + QUOTENAME(j.name, '''')
+        + N', @owner_login_name = N' + QUOTENAME(@new_owner, '''') + N';' + NCHAR(10)
+      FROM msdb.dbo.sysjobs j
+      WHERE j.owner_sid = SUSER_SID(@login_name)
+        AND (NOT EXISTS (SELECT 1 FROM OPENJSON(@jobs)) OR j.name IN (SELECT value FROM OPENJSON(@jobs)));
+      {{exec:@sql}};
+      SELECT j.name AS job_still_owned
+      FROM msdb.dbo.sysjobs j WHERE j.owner_sid = SUSER_SID(@login_name);
+
+  - id: offboarding.reassign_databases
+    name: "5. Reassign owned databases to another login"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+      # protect: false — the new owner only RECEIVES the databases.
+      - name: new_owner
+        type: login
+        required: true
+        must_exist: true
+        protect: false
+        label: "New owner of the databases"
+        help: "The login that will own the databases handed over. It must exist, be enabled, and differ from the login being offboarded."
+      # Which of the login's databases get the new owner.
+      - name: owned_databases
+        type: string
+        source: databases_owned
+        depends_on: [login_name]
+        multi: true
+        default_all: true
+        required: false
+        must_exist: true
+    checks:
+      - id: owner_differs
+        message: "The new owner is the same login being offboarded."
+        sql: |
+          SELECT 1 WHERE @new_owner = @login_name;
+      - id: owner_enabled
+        message: "The new owner login is disabled; pick an enabled login."
+        sql: |
+          SELECT 1 WHERE EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @new_owner AND is_disabled = 1);
+    sql: |
+      DECLARE @sql nvarchar(max) = N'';
+      SELECT @sql += N'ALTER AUTHORIZATION ON DATABASE::' + QUOTENAME(name)
+        + N' TO ' + QUOTENAME(@new_owner) + N';' + NCHAR(10)
+      FROM sys.databases
+      WHERE owner_sid = SUSER_SID(@login_name)
+        AND (NOT EXISTS (SELECT 1 FROM OPENJSON(@owned_databases)) OR name IN (SELECT value FROM OPENJSON(@owned_databases)));
+      {{exec:@sql}};
+      SELECT name AS database_still_owned FROM sys.databases WHERE owner_sid = SUSER_SID(@login_name);
+
+  - id: offboarding.revoke_server_access
+    name: "6. Remove server roles and revoke server permissions"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+    sql: |
+      DECLARE @sql nvarchar(max) = N'';
+      SELECT @sql += N'ALTER SERVER ROLE ' + QUOTENAME(r.name) + N' DROP MEMBER ' + QUOTENAME(@login_name) + N';' + NCHAR(10)
+      FROM sys.server_role_members srm
+      JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+      JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+      WHERE m.name = @login_name;
+      -- class 100 = server-level permissions (not endpoints / impersonation grants).
+      SELECT @sql += N'REVOKE ' + permission_name COLLATE DATABASE_DEFAULT + N' FROM ' + QUOTENAME(@login_name) + N';' + NCHAR(10)
+      FROM sys.server_permissions
+      WHERE grantee_principal_id = SUSER_ID(@login_name) AND class = 100 AND state IN ('G', 'W', 'D');
+      {{exec:@sql}};
+      SELECT r.name AS server_role_remaining
+      FROM sys.server_role_members srm
+      JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+      JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+      WHERE m.name = @login_name;
+
+  - id: offboarding.drop_users
+    name: "7. Drop the login's user in every online database"
+    category: offboarding
+    scope: all_databases
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+      # The run visits these databases only (the all_databases executor reads this parameter by name).
+      - name: databases
+        type: string
+        source: databases
+        multi: true
+        default_all: true
+        required: false
+        must_exist: true
+        lock_when:
+          - column: state
+            not_in: [ONLINE]
+            reason: "not online: cannot be reached"
+    sql: |
+      -- Find the user by SID, so a renamed user is still found.
+      DECLARE @user sysname = (
+        SELECT TOP (1) name FROM sys.database_principals
+        WHERE sid = SUSER_SID(@login_name) AND type IN ('S', 'U', 'G') AND name <> N'dbo');
+      IF @user IS NULL
+      BEGIN
+        IF @dry_run = 1
+          SELECT N'-- no matching user in this database' AS statement;
+        ELSE
+          SELECT CAST(NULL AS sysname) AS dropped_user, N'no matching user' AS result;
+      END
+      ELSE
+      BEGIN
+        -- DROP USER fails while the user owns a schema: hand those to dbo first.
+        DECLARE @sql nvarchar(max) = N'';
+        SELECT @sql += N'ALTER AUTHORIZATION ON SCHEMA::' + QUOTENAME(name) + N' TO dbo;' + NCHAR(10)
+        FROM sys.schemas WHERE principal_id = DATABASE_PRINCIPAL_ID(@user);
+        SET @sql += N'DROP USER ' + QUOTENAME(@user) + N';';
+        {{exec:@sql}};
+        SELECT @user AS dropped_user, N'dropped' AS result;
+      END
+
+  - id: offboarding.drop_login
+    name: "8. Drop the login"
+    category: offboarding
+    scope: server
+    engines: [sqlserver]
+    destructive: true
+    params:
+      - name: login_name
+        type: login
+        required: true
+    checks:
+      - id: login_exists
+        message: "The login does not exist (already dropped?)."
+        sql: |
+          SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = @login_name);
+      - id: not_self
+        message: "You cannot drop the login you are connected with."
+        sql: |
+          SELECT 1 WHERE @login_name IN (ORIGINAL_LOGIN(), SUSER_SNAME());
+      - id: is_sysadmin
+        severity: warning
+        message: "This login is a member of sysadmin."
+        sql: |
+          SELECT 1 WHERE IS_SRVROLEMEMBER('sysadmin', @login_name) = 1;
+    sql: |
+      -- Re-check preconditions right now instead of trusting an earlier screen.
+      -- Skipped in a dry run: a preview of the whole checklist runs BEFORE the earlier steps have
+      -- removed sessions / databases / jobs, so these would always fail there.
+      IF @dry_run = 0
+      BEGIN
+        IF EXISTS (SELECT 1 FROM sys.dm_exec_sessions WHERE login_name = @login_name AND is_user_process = 1)
+          THROW 50000, N'The login still has active sessions: run step 3 first.', 1;
+        IF EXISTS (SELECT 1 FROM sys.databases WHERE owner_sid = SUSER_SID(@login_name))
+          THROW 50000, N'The login still owns databases: run step 5 first.', 1;
+        IF EXISTS (SELECT 1 FROM msdb.dbo.sysjobs WHERE owner_sid = SUSER_SID(@login_name))
+          THROW 50000, N'The login still owns SQL Agent jobs: run step 4 first.', 1;
+      END;
+      DECLARE @sql nvarchar(max) = N'DROP LOGIN ' + QUOTENAME(@login_name);
+      {{exec:@sql}};
+      SELECT CASE WHEN SUSER_ID(@login_name) IS NULL THEN N'dropped' ELSE N'still exists' END AS result;

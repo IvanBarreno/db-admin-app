@@ -1,0 +1,318 @@
+# Server-level lookups: read-only catalog queries that feed pickers, checklists and the Explorer.
+# Contract: return a `value` column (what goes into the parameter) and optionally `label`;
+# every other column travels as extra info. `args` are bound as @name (NULL when the caller sent none).
+# The same id can appear once per engine family (sqlserver / azuresql).
+
+lookups:
+  - id: databases
+    name: "Databases"
+    scope: server
+    engines: [sqlserver]
+    sql: |
+      SELECT d.name AS value,
+             d.state_desc AS state,
+             SUSER_SNAME(d.owner_sid) AS owner,
+             d.recovery_model_desc AS recovery_model,
+             d.compatibility_level
+      FROM sys.databases d
+      WHERE d.database_id > 4
+      ORDER BY d.name;
+
+  - id: databases
+    name: "Databases"
+    scope: server
+    engines: [azuresql]
+    sql: |
+      -- SUSER_SNAME(owner_sid) is rejected on Azure SQL, so no owner column here.
+      SELECT d.name AS value,
+             d.state_desc AS state,
+             d.compatibility_level
+      FROM sys.databases d
+      WHERE d.database_id > 4
+      ORDER BY d.name;
+
+  - id: logins
+    name: "Logins"
+    scope: server
+    engines: [sqlserver]
+    principal: login
+    empty_text: "This server has no SQL, Windows or external logins."
+    sql: |
+      -- Skips roles, certificate/key logins and the built-in ##...## / NT SERVICE / NT AUTHORITY principals.
+      SELECT name AS value,
+             type_desc AS type,
+             is_disabled,
+             default_database_name,
+             create_date
+      FROM sys.server_principals
+      WHERE type IN ('S', 'U', 'G', 'E', 'X')
+        AND name NOT LIKE '##%'
+        AND name NOT LIKE 'NT SERVICE\%'
+        AND name NOT LIKE 'NT AUTHORITY\%'
+      ORDER BY name;
+
+  - id: logins
+    name: "Logins"
+    scope: server
+    engines: [azuresql]
+    connect_to: master
+    principal: login
+    requires: "access to the master database (the server admin, or a member of loginmanager)"
+    empty_text: "No SQL logins in master."
+    sql: |
+      -- Azure SQL Database: server logins live in master only. Needs a login allowed to read master
+      -- (the server admin, or a member of loginmanager); otherwise the picker degrades to free text.
+      -- Contained database users (lookup "users") are the usual way to manage access on Azure.
+      SELECT name AS value,
+             type_desc AS type,
+             is_disabled
+      FROM sys.sql_logins
+      ORDER BY name;
+
+  - id: databases_detail
+    name: "Databases (details)"
+    scope: server
+    engines: [sqlserver]
+    requires: "read access to the msdb database (for the last backup)"
+    sql: |
+      -- For the Explorer: size and last full backup need msdb / master_files, so this is kept apart from the
+      -- light "databases" lookup that feeds every picker.
+      SELECT d.name AS value,
+             d.state_desc AS state,
+             SUSER_SNAME(d.owner_sid) AS owner,
+             d.recovery_model_desc AS recovery_model,
+             d.compatibility_level,
+             CAST((SELECT SUM(CAST(mf.size AS bigint)) FROM sys.master_files mf WHERE mf.database_id = d.database_id) * 8 / 1024.0 AS decimal(18, 1)) AS size_mb,
+             (SELECT MAX(b.backup_finish_date) FROM msdb.dbo.backupset b WHERE b.database_name = d.name AND b.type = 'D') AS last_full_backup,
+             d.create_date
+      FROM sys.databases d
+      WHERE d.database_id > 4
+      ORDER BY d.name;
+
+  - id: databases_detail
+    name: "Databases (details)"
+    scope: server
+    engines: [azuresql]
+    sql: |
+      SELECT d.name AS value,
+             d.state_desc AS state,
+             d.compatibility_level,
+             d.create_date
+      FROM sys.databases d
+      WHERE d.database_id > 4
+      ORDER BY d.name;
+
+  - id: sysadmins
+    name: "Members of sysadmin"
+    scope: server
+    engines: [sqlserver]
+    sql: |
+      SELECT p.name AS value,
+             p.type_desc AS type,
+             p.is_disabled,
+             p.create_date
+      FROM sys.server_role_members m
+      JOIN sys.server_principals r ON r.principal_id = m.role_principal_id AND r.name = 'sysadmin'
+      JOIN sys.server_principals p ON p.principal_id = m.member_principal_id
+      ORDER BY p.name;
+
+  - id: linked_servers
+    name: "Linked servers"
+    scope: server
+    engines: [sqlserver]
+    empty_text: "No linked servers are configured."
+    sql: |
+      SELECT name AS value,
+             product,
+             provider,
+             data_source,
+             is_data_access_enabled,
+             modify_date
+      FROM sys.servers
+      WHERE is_linked = 1
+      ORDER BY name;
+
+  - id: windows_domains
+    name: "Windows domains"
+    scope: server
+    engines: [sqlserver]
+    sql: |
+      -- The domain this SQL Server belongs to (WORKGROUP / the machine name when it is not domain-joined) first,
+      -- then every other domain already used by an existing Windows login or group (trusts, other forests).
+      SELECT DEFAULT_DOMAIN() AS value, N'this server''s domain' AS source, 0 AS sort_order
+      UNION ALL
+      SELECT d.domain_name, N'used by existing logins', 1
+      FROM (SELECT DISTINCT LEFT(name, CHARINDEX('\', name) - 1) AS domain_name
+            FROM sys.server_principals
+            WHERE type IN ('U', 'G') AND CHARINDEX('\', name) > 1) d
+      WHERE d.domain_name NOT IN ('NT SERVICE', 'NT AUTHORITY', 'BUILTIN') AND d.domain_name <> DEFAULT_DOMAIN()
+      ORDER BY sort_order, value;
+
+  - id: databases_owned
+    name: "Databases owned by a login"
+    scope: server
+    engines: [sqlserver]
+    empty_text: "This login owns no databases."
+    args: [login_name]
+    sql: |
+      -- Offboarding: pick which of the leaver's databases get a new owner.
+      SELECT d.name AS value,
+             d.state_desc AS state,
+             d.recovery_model_desc AS recovery_model
+      FROM sys.databases d
+      WHERE d.database_id > 4
+        AND (@login_name IS NULL OR SUSER_SNAME(d.owner_sid) = @login_name)
+      ORDER BY d.name;
+
+  - id: server_permissions
+    name: "Server permissions"
+    scope: server
+    engines: [sqlserver]
+    sql: |
+      -- Every server-level permission this SQL Server version knows (from the engine itself, not a fixed list).
+      SELECT permission_name AS value
+      FROM sys.fn_builtin_permissions('SERVER')
+      WHERE class_desc = 'SERVER'
+      ORDER BY permission_name;
+
+  - id: login_status
+    name: "Login status"
+    scope: server
+    engines: [sqlserver]
+    args: [login_name]
+    sql: |
+      -- One row for the given login: used to offer the right ENABLE/DISABLE or UNLOCK action.
+      SELECT name AS value,
+             type_desc AS type,
+             is_disabled,
+             CAST(ISNULL(LOGINPROPERTY(name, 'IsLocked'), 0) AS bit) AS is_locked,
+             create_date
+      FROM sys.server_principals
+      WHERE name = @login_name;
+
+  - id: server_roles
+    name: "Server roles"
+    scope: server
+    engines: [sqlserver]
+    args: [login_name]
+    sql: |
+      -- Fixed and custom roles straight from the server. is_member is filled when a login_name is given.
+      -- "public" is left out (everyone is in it); is_high_risk flags roles that grant control of the instance.
+      SELECT r.name AS value,
+             r.is_fixed_role,
+             CASE r.name
+               WHEN 'sysadmin'      THEN 'Full control of the whole instance.'
+               WHEN 'securityadmin' THEN 'Manages logins and their permissions (can grant itself more).'
+               WHEN 'serveradmin'   THEN 'Changes server-wide settings and can shut the server down.'
+               WHEN 'setupadmin'    THEN 'Adds and removes linked servers.'
+               WHEN 'processadmin'  THEN 'Can end (KILL) sessions running in the instance.'
+               WHEN 'diskadmin'     THEN 'Manages disk files (rarely used).'
+               WHEN 'dbcreator'     THEN 'Creates, alters, drops and restores databases.'
+               WHEN 'bulkadmin'     THEN 'Can run BULK INSERT.'
+             END AS description,
+             CASE WHEN r.name IN ('sysadmin', 'securityadmin', 'serveradmin', 'setupadmin') THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS is_high_risk,
+             (SELECT COUNT(*) FROM sys.server_role_members x WHERE x.role_principal_id = r.principal_id) AS member_count,
+             CASE WHEN @login_name IS NULL THEN NULL
+                  WHEN EXISTS (SELECT 1
+                               FROM sys.server_role_members m
+                               JOIN sys.server_principals p ON p.principal_id = m.member_principal_id
+                               WHERE m.role_principal_id = r.principal_id AND p.name = @login_name)
+                  THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END AS is_member
+      FROM sys.server_principals r
+      WHERE r.type = 'R' AND r.name <> 'public'
+      ORDER BY r.is_fixed_role DESC, r.name;
+
+  - id: jobs
+    name: "SQL Agent jobs"
+    scope: server
+    engines: [sqlserver]
+    requires: "read access to the msdb database (SQLAgentReaderRole, or sysadmin)"
+    empty_text: "There are no SQL Agent jobs (for this login)."
+    args: [login_name]
+    sql: |
+      -- Needs read access to msdb. When login_name is given, only the jobs that login owns.
+      SELECT j.name AS value,
+             j.enabled AS is_enabled,
+             SUSER_SNAME(j.owner_sid) AS owner,
+             CASE js.last_run_outcome WHEN 0 THEN 'Failed' WHEN 1 THEN 'Succeeded' WHEN 2 THEN 'Retry'
+                                      WHEN 3 THEN 'Canceled' WHEN 5 THEN 'Unknown' END AS last_run,
+             j.date_modified
+      FROM msdb.dbo.sysjobs j
+      LEFT JOIN msdb.dbo.sysjobservers js ON js.job_id = j.job_id AND js.server_id = 0
+      WHERE @login_name IS NULL OR SUSER_SNAME(j.owner_sid) = @login_name
+      ORDER BY j.name;
+
+  - id: server_access
+    name: "Server roles and explicit server permissions of a login"
+    scope: server
+    engines: [sqlserver]
+    args: [login_name]
+    empty_text: "This login holds no server roles or explicit server permissions."
+    sql: |
+      -- Feeds the side-by-side comparison of "Clone server access". CONNECT SQL is left out, as the clone skips it.
+      -- COLLATE: role names and permission names come from catalogs with different collations (UNION would fail).
+      SELECT 'ROLE:' + CAST(r.name AS nvarchar(128)) COLLATE DATABASE_DEFAULT AS value, 'ROLE' AS kind,
+             CAST(r.name AS nvarchar(128)) COLLATE DATABASE_DEFAULT AS item, 'MEMBER' AS state
+      FROM sys.server_role_members srm
+      JOIN sys.server_principals r ON r.principal_id = srm.role_principal_id
+      JOIN sys.server_principals m ON m.principal_id = srm.member_principal_id
+      WHERE m.name = @login_name
+      UNION ALL
+      SELECT 'PERMISSION:' + CAST(p.permission_name AS nvarchar(128)) COLLATE DATABASE_DEFAULT, 'PERMISSION',
+             CAST(p.permission_name AS nvarchar(128)) COLLATE DATABASE_DEFAULT, CAST(p.state_desc AS nvarchar(60)) COLLATE DATABASE_DEFAULT
+      FROM sys.server_permissions p
+      WHERE p.grantee_principal_id = SUSER_ID(@login_name) AND p.class = 100 AND p.permission_name <> 'CONNECT SQL'
+      ORDER BY 2, 3;
+
+  - id: login_impact
+    name: "What offboarding a login will touch"
+    scope: server
+    engines: [sqlserver]
+    args: [login_name]
+    sql: |
+      -- Dry-run report for the offboarding workflow: counts only, nothing is changed.
+      -- Each row = one thing the steps will act on. Needs read access to msdb and VIEW SERVER STATE.
+      SELECT 'Active sessions (kill_sessions)' AS value,
+             (SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND login_name = @login_name) AS [count]
+      UNION ALL
+      SELECT 'SQL Agent jobs owned (reassign_jobs)',
+             (SELECT COUNT(*) FROM msdb.dbo.sysjobs WHERE SUSER_SNAME(owner_sid) = @login_name)
+      UNION ALL
+      SELECT 'Databases owned (reassign_databases)',
+             (SELECT COUNT(*) FROM sys.databases WHERE SUSER_SNAME(owner_sid) = @login_name)
+      UNION ALL
+      SELECT 'Server roles (revoke_access)',
+             (SELECT COUNT(*) FROM sys.server_role_members m
+                JOIN sys.server_principals p ON p.principal_id = m.member_principal_id
+                WHERE p.name = @login_name)
+      UNION ALL
+      SELECT 'Explicit server permissions (revoke_access)',
+             (SELECT COUNT(*) FROM sys.server_permissions sp
+                JOIN sys.server_principals p ON p.principal_id = sp.grantee_principal_id
+                WHERE p.name = @login_name AND sp.type <> 'COSQ')
+      UNION ALL
+      SELECT 'Databases NOT online (steps over all databases skip them)',
+             (SELECT COUNT(*) FROM sys.databases WHERE database_id > 4 AND state <> 0);
+
+  - id: sessions
+    name: "Sessions"
+    scope: server
+    engines: [sqlserver]
+    requires: "the VIEW SERVER STATE permission"
+    empty_text: "No open user sessions (for this login)."
+    args: [login_name]
+    sql: |
+      -- Needs VIEW SERVER STATE. When login_name is given, only that login's user sessions.
+      SELECT CAST(s.session_id AS varchar(10)) AS value,
+             CONCAT(s.session_id, ' · ', s.login_name, ' @ ', ISNULL(s.host_name, '?'), ' · ', ISNULL(s.program_name, '?')) AS label,
+             s.login_name,
+             s.host_name,
+             s.program_name,
+             DB_NAME(s.database_id) AS database_name,
+             s.status,
+             s.last_request_end_time
+      FROM sys.dm_exec_sessions s
+      WHERE s.is_user_process = 1
+        AND s.session_id <> @@SPID
+        AND (@login_name IS NULL OR s.login_name = @login_name)
+      ORDER BY s.session_id;
