@@ -1,11 +1,16 @@
+import { Textarea } from '@mantine/core'
 import { useEffect, useState } from 'react'
 import type { OperationParameter } from '../api/operations'
+import { fieldProps } from './fieldKit'
 import { encodeList, parseList, splitNames } from './lookupText'
 import type { BlockReporter } from './lookupState'
 
 /**
- * A list parameter the DBA TYPES (YAML `typed_list: true`), for things that do not exist on the server yet,
- * e.g. the names of logins to create. One name per line; pasting a column from a spreadsheet works.
+ * A list parameter the DBA TYPES (YAML `typed_list: true`), for things that do not exist on the server yet.
+ * One name per line; pasting a column from a spreadsheet works.
+ *
+ * (A typed list that comes with one password per item — creating several logins — is drawn by PasswordRows
+ * instead, one row per name. This plain box is for typed lists without passwords.)
  *
  * The form's value for a list is a JSON array (see encodeList), which is awkward to type in, so this component
  * keeps the raw text in its own state and reports the parsed names upwards on every keystroke.
@@ -41,32 +46,27 @@ export function TypedList({
     return () => onBlock?.(param.name, null)
   }, [onBlock, param.name, blocking])
 
+  const props = fieldProps(param)
+
   return (
-    <div className="rounded border border-slate-200 text-sm">
-      <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-3 py-1.5">
-        <span className="font-medium text-slate-700">
-          {param.label ?? param.name.replaceAll('_', ' ')}
-          {param.required && <span className="text-red-600"> *</span>}
-        </span>
-        <span className="text-xs text-slate-500">
-          {names.length} name{names.length === 1 ? '' : 's'}
-        </span>
-      </div>
-      {param.help && <p className="px-3 pt-1 text-xs text-slate-500">{param.help}</p>}
-      <div className="px-3 py-1.5">
-        <textarea
-          value={text}
-          rows={6}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder={'one name per line\napp_reports\napp_billing'}
-          onChange={(e) => {
-            setText(e.target.value)
-            onChange(encodeList(splitNames(e.target.value)))
-          }}
-          className="w-full max-w-md rounded border border-slate-300 px-2 py-1.5 font-mono text-xs"
-        />
-      </div>
-    </div>
+    <Textarea
+      {...props}
+      // The counter rides along with the help text, under the box.
+      description={[`${names.length} name${names.length === 1 ? '' : 's'}`, param.help].filter(Boolean).join(' · ')}
+      value={text}
+      // autosize: the box grows with its content between minRows and maxRows.
+      autosize
+      minRows={4}
+      maxRows={12}
+      maw={420}
+      spellCheck={false}
+      autoComplete="off"
+      placeholder={'one name per line\napp_reports\napp_billing'}
+      styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', fontSize: 'var(--mantine-font-size-xs)' } }}
+      onChange={(event) => {
+        setText(event.currentTarget.value)
+        onChange(encodeList(splitNames(event.currentTarget.value)))
+      }}
+    />
   )
 }

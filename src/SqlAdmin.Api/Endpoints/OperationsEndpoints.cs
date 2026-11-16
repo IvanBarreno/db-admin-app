@@ -60,6 +60,10 @@ public static class OperationsEndpoints
                 // in DomainExceptionHandler, so no try/catch is needed here.
                 var plan = OperationExecutor.Plan(operation, request.Params, engines.Get(serverDef.Engine).Dialect);
 
+                // Passwords typed per login (bulk create / reset) are checked now, so a too-long one is a 400
+                // here and not a surprise after the confirm step. Nothing is generated during a preview.
+                OperationExecutor.ValidatePerItemSecrets(operation, request.Params);
+
                 // must_exist parameters are checked against the server's own lists (400 if not found).
                 await MustExistValidator.ValidateAsync(
                     operation, request.Params, request.ServerName, request.Database, lookups, connections, ct);

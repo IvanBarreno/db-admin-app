@@ -1,27 +1,41 @@
+import { Alert, Anchor, Badge, Button, Card, Code, Group, Skeleton, SimpleGrid, Stack, Text } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
+import { IconPlugConnected } from '@tabler/icons-react'
 import { EnvBadge } from '../components/EnvBadge'
+import { PageHeader } from '../shell/PageHeader'
 import { useServers, useTestConnection, type ServerSummary } from '../api/servers'
 
 /** Lists every configured server with a "Test connection" button per card. */
 export default function ServersPage() {
   const servers = useServers()
 
-  if (servers.isPending) return <p className="text-slate-500">Loading servers…</p>
-  if (servers.isError) return <p className="text-red-700">Could not load servers: {servers.error.message}</p>
-
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Servers</h2>
-      <p className="text-sm text-slate-600">
-        Defined in <code>servers.json</code> (shared) and <code>servers.local.json</code> (personal). Restart the API after editing.
-      </p>
-      <ul className="grid gap-4 md:grid-cols-2">
-        {servers.data.map((s) => (
-          <li key={s.name}>
-            <ServerCard server={s} />
-          </li>
-        ))}
-      </ul>
-    </div>
+    <Stack gap="md">
+      <PageHeader
+        title="Servers"
+        description="Defined in servers.json (shared) and servers.local.json (personal). Restart the API after editing."
+      />
+
+      {servers.isPending && (
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          <Skeleton height={190} />
+          <Skeleton height={190} />
+        </SimpleGrid>
+      )}
+      {servers.isError && (
+        <Alert color="red" variant="light">
+          Could not load servers: {servers.error.message}
+        </Alert>
+      )}
+
+      {servers.data && (
+        <SimpleGrid cols={{ base: 1, md: 2 }}>
+          {servers.data.map((s) => (
+            <ServerCard key={s.name} server={s} />
+          ))}
+        </SimpleGrid>
+      )}
+    </Stack>
   )
 }
 
@@ -29,78 +43,107 @@ function ServerCard({ server }: { server: ServerSummary }) {
   const test = useTestConnection(server.name)
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-2">
+    <Card withBorder padding="md">
+      <Group justify="space-between" align="flex-start" wrap="nowrap">
         <div>
-          <h3 className="font-semibold">{server.name}</h3>
-          <p className="text-sm text-slate-600">
+          <Text fw={600}>{server.name}</Text>
+          <Text size="sm" c="dimmed">
             {server.host}
             {server.port ? `,${server.port}` : ''}
             {server.defaultDatabase ? ` · ${server.defaultDatabase}` : ''}
-          </p>
+          </Text>
         </div>
         <EnvBadge environment={server.environment} />
-      </div>
+      </Group>
 
-      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-        <dt className="text-slate-500">Engine</dt>
-        <dd>{server.engineDisplayName}</dd>
-        <dt className="text-slate-500">Auth</dt>
-        <dd>{server.auth}</dd>
+      <Stack gap={2} mt="sm" fz="sm">
+        <Fact label="Engine" value={server.engineDisplayName} />
+        <Fact label="Auth" value={server.auth} />
         {server.tags.length > 0 && (
-          <>
-            <dt className="text-slate-500">Tags</dt>
-            <dd>{server.tags.join(', ')}</dd>
-          </>
+          <Group gap={4}>
+            <Text c="dimmed" w={72}>
+              Tags
+            </Text>
+            {server.tags.map((tag) => (
+              <Badge key={tag} size="sm" variant="outline" color="gray">
+                {tag}
+              </Badge>
+            ))}
+          </Group>
         )}
-      </dl>
+      </Stack>
 
-      <div className="mt-4 flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => test.mutate()}
-          disabled={test.isPending}
-          className="rounded bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+      <Group mt="md" gap="sm">
+        <Button
+          leftSection={<IconPlugConnected size={16} />}
+          loading={test.isPending}
+          onClick={() =>
+            test.mutate(undefined, {
+              onSuccess: (result) =>
+                notifications.show(
+                  result.success
+                    ? { color: 'green', title: server.name, message: `Connected in ${result.elapsedMs} ms` }
+                    : { color: 'red', title: server.name, message: 'Connection failed. Details are on the card.' },
+                ),
+            })
+          }
         >
-          {test.isPending ? 'Testing…' : 'Test connection'}
-        </button>
-        {test.isError && <span className="text-sm text-red-700">{test.error.message}</span>}
-      </div>
+          Test connection
+        </Button>
+        {test.isError && (
+          <Text size="sm" c="red">
+            {test.error.message}
+          </Text>
+        )}
+      </Group>
 
       {test.data && <TestResult result={test.data} />}
-    </div>
+    </Card>
+  )
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <Group gap="xs" wrap="nowrap">
+      <Text c="dimmed" w={72}>
+        {label}
+      </Text>
+      <Text span>{value}</Text>
+    </Group>
   )
 }
 
 function TestResult({ result }: { result: NonNullable<ReturnType<typeof useTestConnection>['data']> }) {
   if (!result.success || !result.info) {
     return (
-      <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-        <p className="font-medium">Connection failed ({result.elapsedMs} ms)</p>
-        <p className="mt-1 whitespace-pre-wrap break-words">{result.error}</p>
-      </div>
+      <Alert color="red" variant="light" mt="sm" title={`Connection failed (${result.elapsedMs} ms)`}>
+        <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {result.error}
+        </Text>
+        <Text size="xs" c="dimmed" mt={6}>
+          A serverless Azure database may need a second try while it wakes up.{' '}
+          <Anchor size="xs" href="https://learn.microsoft.com/azure/azure-sql/database/serverless-tier-overview" target="_blank" rel="noreferrer">
+            Why?
+          </Anchor>
+        </Text>
+      </Alert>
     )
   }
 
   const i = result.info
   return (
-    <div className="mt-3 rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-      <p className="font-medium">Connected in {result.elapsedMs} ms</p>
-      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
-        <dt className="text-emerald-700">Server</dt>
-        <dd>{i.serverName}</dd>
-        <dt className="text-emerald-700">Version</dt>
-        <dd>
-          {i.version} · {i.edition}
-        </dd>
-        <dt className="text-emerald-700">Login</dt>
-        <dd>
-          {i.loginName}
-          {i.isSysAdmin ? ' (sysadmin)' : ''}
-        </dd>
-        <dt className="text-emerald-700">Database</dt>
-        <dd>{i.currentDatabase}</dd>
-      </dl>
-    </div>
+    <Alert color="green" variant="light" mt="sm" title={`Connected in ${result.elapsedMs} ms`}>
+      <Stack gap={2} fz="sm">
+        <Fact label="Server" value={i.serverName} />
+        <Fact label="Version" value={`${i.version} · ${i.edition}`} />
+        <Fact label="Login" value={`${i.loginName}${i.isSysAdmin ? ' (sysadmin)' : ''}`} />
+        <Group gap="xs" wrap="nowrap">
+          <Text c="dimmed" w={72}>
+            Database
+          </Text>
+          <Code>{i.currentDatabase}</Code>
+        </Group>
+      </Stack>
+    </Alert>
   )
 }

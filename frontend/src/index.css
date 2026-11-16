@@ -1,11 +1,10 @@
-/* Tailwind v4: this single import pulls in the reset (preflight) and enables every utility class.
-   No tailwind.config.js — customisation happens in CSS with @theme when we need it. */
-@import "tailwindcss";
+/* index.css — the app's own global CSS, loaded after Mantine's stylesheets (see main.tsx).
 
-/* Project-wide defaults. Utilities in JSX override these per element. */
-@layer base {
-  html {
-    /* System font stack; small internal tool, no web fonts to load. */
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  }
+   Almost nothing lives here on purpose: Mantine's "@mantine/core/styles.css" already provides the browser
+   reset, fonts and colours for both colour schemes, and each component brings its own styles. Component-
+   specific CSS goes in a *.module.css file next to the component (see TargetBar.module.css), not here. */
+
+/* Long names (DOMAIN\login, schema.object) inside tables and code boxes must be selectable in one go. */
+code {
+  overflow-wrap: anywhere;
 }

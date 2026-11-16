@@ -1,3 +1,6 @@
+import { Alert, Button, Checkbox, Group, Paper, Select, Skeleton, Stack, Table, Text } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
+import { IconDownload } from '@tabler/icons-react'
 import { useState } from 'react'
 import { useLookup } from '../api/lookups'
 import { useServers } from '../api/servers'
@@ -43,119 +46,111 @@ export function LoginDiff({ serverName }: { serverName: string }) {
       fileSlug(`diff ${leftLogin} ${serverName} vs ${rightLogin} ${rightServer}`),
       toCsv(['type', 'item', leftTitle, rightTitle, 'differs'], shown.map((r) => [r.kind, r.item, r.left ?? '', r.right ?? '', r.differs ? 'yes' : 'no'])),
     )
+    notifications.show({ color: 'green', message: `CSV saved (${shown.length} rows)` })
   }
 
   return (
-    <div className="space-y-3 text-sm">
-      <div className="flex flex-wrap items-end gap-3">
-        <label>
-          <span className="mb-1 block text-slate-600">Login on {serverName}</span>
-          <Combobox
-            value={leftLogin}
-            onChange={setLeftLogin}
-            items={(leftLogins.data?.items ?? []).map((i) => ({ value: i.value, hint: lookupHint(i) }))}
-            placeholder={leftLogins.isPending ? 'loading…' : 'pick a login'}
-            className="w-64"
-          />
-        </label>
+    <Stack gap="md">
+      <Group align="flex-end" gap="sm" wrap="wrap">
+        <Combobox
+          label={`Login on ${serverName}`}
+          value={leftLogin}
+          onChange={setLeftLogin}
+          items={(leftLogins.data?.items ?? []).map((i) => ({ value: i.value, hint: lookupHint(i) }))}
+          placeholder={leftLogins.isPending ? 'loading…' : 'pick a login'}
+          w={256}
+        />
 
-        <span className="pb-2 text-slate-400">compared with</span>
+        <Text c="dimmed" pb={8}>
+          compared with
+        </Text>
 
-        <label>
-          <span className="mb-1 block text-slate-600">Server</span>
-          <select
-            value={rightServer}
-            onChange={(e) => {
-              setOtherServer(e.target.value === serverName ? '' : e.target.value)
-              setRightLogin('') // logins belong to a server: start again
-            }}
-            className="rounded border border-slate-300 px-2 py-1.5"
-          >
-            {servers.data?.map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.name}
-                {s.name === serverName ? ' (same server)' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
+        <Select
+          label="Server"
+          w={220}
+          allowDeselect={false}
+          data={(servers.data ?? []).map((s) => ({ value: s.name, label: s.name === serverName ? `${s.name} (same server)` : s.name }))}
+          value={rightServer}
+          onChange={(next) => {
+            setOtherServer(next === null || next === serverName ? '' : next)
+            setRightLogin('') // logins belong to a server: start again
+          }}
+        />
 
-        <label>
-          <span className="mb-1 block text-slate-600">Login on {rightServer}</span>
-          <Combobox
-            value={rightLogin}
-            onChange={setRightLogin}
-            items={(rightLogins.data?.items ?? []).map((i) => ({ value: i.value, hint: lookupHint(i) }))}
-            placeholder={rightLogins.isPending ? 'loading…' : 'pick a login'}
-            className="w-64"
-          />
-        </label>
+        <Combobox
+          label={`Login on ${rightServer}`}
+          value={rightLogin}
+          onChange={setRightLogin}
+          items={(rightLogins.data?.items ?? []).map((i) => ({ value: i.value, hint: lookupHint(i) }))}
+          placeholder={rightLogins.isPending ? 'loading…' : 'pick a login'}
+          w={256}
+        />
 
         {/* The usual "same login, other server" case in one click. */}
         {otherServer !== '' && leftLogin !== '' && rightLogin !== leftLogin && (
-          <button type="button" onClick={() => setRightLogin(leftLogin)} className="pb-2 text-xs text-slate-600 underline">
+          <Button variant="subtle" size="compact-sm" mb={4} onClick={() => setRightLogin(leftLogin)}>
             use [{leftLogin}]
-          </button>
+          </Button>
         )}
-      </div>
+      </Group>
 
-      {!ready && <p className="text-slate-500">Pick both logins to compare their server roles and explicit server permissions.</p>}
-      {ready && (left.isPending || right.isPending) && <p className="text-slate-500">Reading both logins…</p>}
-      {ready && failed && <p className="text-amber-700">Could not read their access: {failed}</p>}
+      {!ready && (
+        <Text c="dimmed" size="sm">
+          Pick both logins to compare their server roles and explicit server permissions.
+        </Text>
+      )}
+      {ready && (left.isPending || right.isPending) && <Skeleton height={64} />}
+      {ready && failed && (
+        <Alert color="yellow" variant="light">
+          Could not read their access: {failed}
+        </Alert>
+      )}
 
       {ready && !failed && left.data && right.data && (
-        <div className="rounded border border-slate-200 bg-white">
-          <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-3 py-2">
-            <span className={`font-medium ${different === 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+        <Paper withBorder>
+          <Group gap="sm" px="sm" py={8} wrap="wrap" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+            <Text size="sm" fw={600} c={different === 0 ? 'green' : 'orange'}>
               {rows.length === 0
                 ? 'Neither holds any server roles or explicit server permissions.'
                 : different === 0
                   ? `Identical: ${rows.length} item${rows.length === 1 ? '' : 's'}, no differences.`
                   : `${different} difference${different === 1 ? '' : 's'} in ${rows.length} item${rows.length === 1 ? '' : 's'}.`}
-            </span>
-            <label className="flex items-center gap-1 text-xs text-slate-600">
-              <input type="checkbox" checked={onlyDifferences} onChange={(e) => setOnlyDifferences(e.target.checked)} />
-              only differences
-            </label>
-            <button
-              type="button"
-              onClick={exportCsv}
-              disabled={shown.length === 0}
-              className="ml-auto rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
-            >
+            </Text>
+            <Checkbox size="xs" label="only differences" checked={onlyDifferences} onChange={(e) => setOnlyDifferences(e.currentTarget.checked)} />
+            <Button ml="auto" size="compact-xs" variant="default" leftSection={<IconDownload size={14} />} onClick={exportCsv} disabled={shown.length === 0}>
               Export CSV
-            </button>
-          </div>
+            </Button>
+          </Group>
           {shown.length > 0 && (
-            <div className="max-h-[28rem] overflow-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="sticky top-0 bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="px-3 py-1.5">Type</th>
-                    <th className="px-3 py-1.5">Item</th>
-                    <th className="px-3 py-1.5">{leftTitle}</th>
-                    <th className="px-3 py-1.5">{rightTitle}</th>
-                  </tr>
-                </thead>
-                <tbody>
+            <Table.ScrollContainer minWidth={480} maxHeight={448} type="native">
+              <Table stickyHeader fz="xs" verticalSpacing={4}>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Type</Table.Th>
+                    <Table.Th>Item</Table.Th>
+                    <Table.Th>{leftTitle}</Table.Th>
+                    <Table.Th>{rightTitle}</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
                   {shown.map((r) => (
-                    <tr key={r.key} className={`border-t border-slate-100 ${r.differs ? 'bg-amber-50' : ''}`}>
-                      <td className="px-3 py-1 text-slate-500">{r.kind === 'ROLE' ? 'Role' : 'Permission'}</td>
-                      <td className="px-3 py-1 font-mono">{r.item}</td>
-                      <td className={`px-3 py-1 ${r.left ? '' : 'text-slate-400'}`}>{r.left ?? '— not held'}</td>
-                      <td className={`px-3 py-1 ${r.right ? '' : 'text-slate-400'}`}>{r.right ?? '— not held'}</td>
-                    </tr>
+                    <Table.Tr key={r.key} bg={r.differs ? 'var(--mantine-color-yellow-light)' : undefined}>
+                      <Table.Td c="dimmed">{r.kind === 'ROLE' ? 'Role' : 'Permission'}</Table.Td>
+                      <Table.Td ff="monospace">{r.item}</Table.Td>
+                      <Table.Td c={r.left ? undefined : 'dimmed'}>{r.left ?? '— not held'}</Table.Td>
+                      <Table.Td c={r.right ? undefined : 'dimmed'}>{r.right ?? '— not held'}</Table.Td>
+                    </Table.Tr>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
           )}
-        </div>
+        </Paper>
       )}
 
-      <p className="text-xs text-slate-500">
+      <Text size="xs" c="dimmed">
         Server level only (CONNECT SQL is left out). To copy what is missing, use <em>Clone server access</em> on the Operations page.
-      </p>
-    </div>
+      </Text>
+    </Stack>
   )
 }

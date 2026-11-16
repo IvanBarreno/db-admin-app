@@ -1,37 +1,32 @@
-import { useState } from 'react'
+import { ActionIcon, Alert, Code, CopyButton, Group, Stack, Text, Tooltip } from '@mantine/core'
+import { IconCheck, IconCopy, IconKey } from '@tabler/icons-react'
 
 /**
  * Shows server-generated passwords once. They are not stored or logged anywhere (the audit log
  * keeps "***"), so this panel is the only copy: it disappears when the result is replaced.
  */
 export function GeneratedPasswords({ passwords }: { passwords: Record<string, string> }) {
-  const [copied, setCopied] = useState<string | null>(null)
-
-  async function copy(name: string, value: string) {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(name)
-    } catch {
-      // Clipboard can be blocked (non-secure context); the value stays selectable on screen.
-    }
-  }
-
   return (
-    <div className="space-y-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-      <p className="font-medium">Generated password — shown once. Copy it now; it is not stored anywhere.</p>
-      {Object.entries(passwords).map(([name, value]) => (
-        <div key={name} className="flex items-center gap-3">
-          <span className="text-amber-800">{name}</span>
-          <code className="select-all rounded bg-white px-2 py-1 font-mono">{value}</code>
-          <button
-            type="button"
-            onClick={() => copy(name, value)}
-            className="rounded border border-amber-400 px-2 py-1 text-xs hover:bg-amber-100"
-          >
-            {copied === name ? 'Copied' : 'Copy'}
-          </button>
-        </div>
-      ))}
-    </div>
+    <Alert color="yellow" variant="light" icon={<IconKey size={18} />} title="Generated password — shown once. Copy it now; it is not stored anywhere.">
+      <Stack gap="xs">
+        {Object.entries(passwords).map(([name, value]) => (
+          <Group key={name} gap="sm" wrap="nowrap">
+            <Text size="sm">{name}</Text>
+            <Code fz="sm" style={{ userSelect: 'all' }}>
+              {value}
+            </Code>
+            <CopyButton value={value}>
+              {({ copied, copy }) => (
+                <Tooltip label={copied ? 'Copied' : 'Copy'}>
+                  <ActionIcon variant="default" size="md" onClick={copy} aria-label={`Copy the ${name}`}>
+                    {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </CopyButton>
+          </Group>
+        ))}
+      </Stack>
+    </Alert>
   )
 }

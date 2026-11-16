@@ -1,4 +1,7 @@
-import { useState } from 'react'
+import { Accordion, Alert, Button, Code, Group, Modal, Paper, Select, Skeleton, Stack, Text, TextInput } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
+import { IconAlertTriangle, IconPlayerPlay, IconSearch } from '@tabler/icons-react'
+import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { readOperationLink } from '../components/useInOperation'
 import { AccessComparison } from '../components/AccessComparison'
@@ -12,6 +15,7 @@ import { ResultsGrid } from '../components/ResultsGrid'
 import { StatementList } from '../components/StatementList'
 import { GeneratedPasswords } from '../components/GeneratedPasswords'
 import { StepLog } from '../components/StepLog'
+import { PageHeader } from '../shell/PageHeader'
 import { useDatabases, useServers } from '../api/servers'
 import { useExecuteOperation, useOperations, usePreviewOperation } from '../api/operations'
 
@@ -60,7 +64,8 @@ export default function OperationsPage() {
   const summary = operation ? describeOperation(operation, paramValues) : null
 
   // Destructive operations: the preview hands back a token bound to the exact request, and
-  // Production servers also need the server name typed. Both go back with /execute.
+  // Production servers also need the server name typed. Both go back with /execute — from the confirm dialog.
+  const [confirming, setConfirming] = useState(false)
   const [typedServerName, setTypedServerName] = useState('')
   const pendingConfirm = preview.data?.destructive ? preview.data : null
   const confirmReady = !pendingConfirm?.requiresServerName || typedServerName === serverName
@@ -84,6 +89,7 @@ export default function OperationsPage() {
   function resetPreview() {
     preview.reset()
     execute.reset()
+    setConfirming(false)
     setTypedServerName('')
   }
 
@@ -97,237 +103,312 @@ export default function OperationsPage() {
     preview.mutate(buildRequest())
   }
 
+  /** Sends the run, with the token of the preview, and tells the DBA how it went (the details are below). */
+  function sendExecute(current: NonNullable<typeof preview.data>) {
+    setConfirming(false)
+    execute.mutate(
+      {
+        ...buildRequest(),
+        confirmToken: current.confirmToken,
+        confirmServerName: current.requiresServerName ? typedServerName : null,
+      },
+      {
+        onSuccess: (result) =>
+          notifications.show(
+            result.success
+              ? { color: 'green', title: 'Run finished', message: `${operation?.name ?? operationId} · ${result.elapsedMs} ms` }
+              : { color: 'red', title: 'Run failed', message: result.error ?? 'See the details below the buttons.' },
+          ),
+        onError: (error) => notifications.show({ color: 'red', title: 'Run refused', message: error.message }),
+      },
+    )
+  }
+
   async function runExecute() {
     if (!serverName || !operationId) return
     // Always preview first: it tells us whether this run is destructive and gives the token.
     const current = preview.data ?? (await preview.mutateAsync(buildRequest()).catch(() => null))
     if (!current) return // preview failed; its error is shown below
     if (current.checks?.some((c) => c.blocking)) return // blocked by a preflight check; shown below
-    if (current.destructive && !(preview.data && confirmReady)) return // show the confirm panel first
-    execute.mutate({
-      ...buildRequest(),
-      confirmToken: current.confirmToken,
-      confirmServerName: current.requiresServerName ? typedServerName : null,
-    })
+    // A destructive run waits for the confirm dialog: the DBA reviews the statements and the recap there.
+    if (current.destructive) {
+      setConfirming(true)
+      return
+    }
+    sendExecute(current)
   }
 
+  // Operations grouped by category in the picker: [{ group: 'audit', items: [...] }, ...] is Mantine's format.
+  const operationOptions = useMemo(() => {
+    const byCategory = new Map<string, { value: string; label: string }[]>()
+    for (const op of operations.data ?? []) {
+      const items = byCategory.get(op.category) ?? []
+      items.push({ value: op.id, label: `${op.name}${op.destructive ? ' ⚠' : ''}` })
+      byCategory.set(op.category, items)
+    }
+    return [...byCategory].map(([group, items]) => ({ group, items }))
+  }, [operations.data])
+
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Operations</h2>
+    <Stack gap="md">
+      <PageHeader title="Operations" description="Pick a server and an operation, fill it in, preview the exact SQL, then run it." />
 
       <TargetBar server={server} where={operation ? where : null} summary={summary} />
 
-      {servers.isPending && <p className="text-slate-500">Loading servers…</p>}
-      {servers.isError && <p className="text-red-700">Could not load servers: {servers.error.message}</p>}
+      {servers.isPending && <Skeleton height={36} maw={320} />}
+      {servers.isError && (
+        <Alert color="red" variant="light">
+          Could not load servers: {servers.error.message}
+        </Alert>
+      )}
 
       {servers.data && (
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="text-sm">
-            <span className="mb-1 block text-slate-600">Server</span>
-            <select
-              value={serverName ?? ''}
-              onChange={(e) => {
-                setServerName(e.target.value || null)
-                setDatabase('')
-                setOperationId(null)
-                changeParams({})
-              }}
-              className="rounded border border-slate-300 px-2 py-1.5"
-            >
-              <option value="">Select a server…</option>
-              {servers.data.map((s) => (
-                <option key={s.name} value={s.name}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {server && <EnvBadge environment={server.environment} />}
-        </div>
+        <Group align="flex-end" gap="sm">
+          <Select
+            label="Server"
+            placeholder="Select a server…"
+            w={260}
+            data={servers.data.map((s) => s.name)}
+            value={serverName}
+            onChange={(next) => {
+              setServerName(next)
+              setDatabase('')
+              setOperationId(null)
+              changeParams({})
+            }}
+          />
+          {server && (
+            <div style={{ paddingBottom: 6 }}>
+              <EnvBadge environment={server.environment} />
+            </div>
+          )}
+        </Group>
       )}
 
       {serverName && (
-        <label className="block text-sm">
-          <span className="mb-1 block text-slate-600">Operation</span>
-          {operations.isPending && <p className="text-slate-500">Loading operations…</p>}
-          {operations.isError && <p className="text-red-700">Could not load operations: {operations.error.message}</p>}
+        <div>
+          {operations.isPending && <Skeleton height={36} maw={520} />}
+          {operations.isError && (
+            <Alert color="red" variant="light">
+              Could not load operations: {operations.error.message}
+            </Alert>
+          )}
           {operations.data && (
-            <select
-              value={operationId ?? ''}
-              onChange={(e) => {
-                setOperationId(e.target.value || null)
+            <Select
+              label="Operation"
+              placeholder="Select an operation…"
+              maw={520}
+              searchable
+              nothingFoundMessage="No operation matches"
+              data={operationOptions}
+              value={operationId}
+              // What the chosen operation does, in plain words, right under the picker.
+              description={operation?.description ?? undefined}
+              inputWrapperOrder={['label', 'input', 'description', 'error']}
+              onChange={(next) => {
+                setOperationId(next)
                 changeParams({})
               }}
-              className="w-full max-w-md rounded border border-slate-300 px-2 py-1.5"
-            >
-              <option value="">Select an operation…</option>
-              {operations.data.map((op) => (
-                <option key={op.id} value={op.id} title={op.description ?? undefined}>
-                  [{op.category}] {op.name}
-                  {op.destructive ? ' ⚠' : ''}
-                </option>
-              ))}
-            </select>
+            />
           )}
-          {/* What the chosen operation does, in plain words (the option tooltips are not shown everywhere). */}
-          {operation?.description && <span className="mt-1 block max-w-2xl text-xs text-slate-500">{operation.description}</span>}
-        </label>
+        </div>
       )}
 
       {operation && (
-        <div className="space-y-3 rounded border border-slate-200 p-4">
-          {/* Only here, and only for operations that work inside one database: the user / role lists below need it. */}
-          {needsDatabase && (
-            <label className="block text-sm">
-              <span className="mb-1 block text-slate-600">
-                Database <span className="text-red-600">*</span>
-                <span className="ml-2 text-xs text-slate-400">this operation works inside one database</span>
-              </span>
-              <select
-                value={database}
-                onChange={(e) => {
-                  setDatabase(e.target.value)
+        <Paper withBorder p="md">
+          <Stack gap="md">
+            {/* Only here, and only for operations that work inside one database: the user / role lists below need it. */}
+            {needsDatabase && (
+              <Select
+                label="Database"
+                withAsterisk
+                description="This operation works inside one database."
+                inputWrapperOrder={['label', 'input', 'description', 'error']}
+                placeholder={databases.isPending ? 'loading…' : `Select a database… (blank = ${server?.defaultDatabase ?? 'login default'})`}
+                w={320}
+                searchable
+                disabled={databases.isPending}
+                data={(databases.data ?? []).map((d) => ({
+                  value: d.name,
+                  label: d.isOnline ? d.name : `${d.name} (${d.state.toLowerCase()})`,
+                  disabled: !d.isOnline,
+                }))}
+                value={database || null}
+                onChange={(next) => {
+                  setDatabase(next ?? '')
                   changeParams({}) // users and roles belong to the database: start the form again
                 }}
-                disabled={databases.isPending}
-                className="rounded border border-slate-300 px-2 py-1.5 disabled:opacity-50"
-              >
-                <option value="">{databases.isPending ? 'loading…' : `Select a database… (blank = ${server?.defaultDatabase ?? 'login default'})`}</option>
-                {databases.data?.map((d) => (
-                  <option key={d.name} value={d.name} disabled={!d.isOnline}>
-                    {d.name}
-                    {d.isOnline ? '' : ` (${d.state.toLowerCase()})`}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+              />
+            )}
 
-          <ParamForm
-            params={operation.params}
-            values={paramValues}
-            onChange={changeParams}
-            serverName={serverName}
-            database={effectiveDatabase}
-            allowProtected={operation.readOnly}
-            onBlockedChange={setFormBlocked}
-          />
-
-          {/* Clone: both logins' current access side by side, with what the target will hold afterwards. */}
-          {operation.id === 'changes.clone_server_access' && (
-            <AccessComparison
+            <ParamForm
+              params={operation.params}
+              values={paramValues}
+              onChange={changeParams}
               serverName={serverName}
-              source={paramValues.source_login ?? ''}
-              target={paramValues.target_login ?? ''}
-              includeRoles={paramValues.include_roles !== 'false'}
-              includePermissions={paramValues.include_permissions !== 'false'}
-            />
-          )}
-          {operation.id === 'changes.clone_database_access' && (
-            <AccessComparison
-              serverName={serverName}
-              source={paramValues.source_user ?? ''}
-              target={paramValues.target_user ?? ''}
-              includeRoles={paramValues.include_roles !== 'false'}
-              includePermissions={paramValues.include_permissions !== 'false'}
-              lookupId="database_access"
-              argName="user_name"
               database={effectiveDatabase}
+              allowProtected={operation.readOnly}
+              onBlockedChange={setFormBlocked}
+            />
+
+            {/* Clone: both logins' current access side by side, with what the target will hold afterwards. */}
+            {operation.id === 'changes.clone_server_access' && (
+              <AccessComparison
+                serverName={serverName}
+                source={paramValues.source_login ?? ''}
+                target={paramValues.target_login ?? ''}
+                includeRoles={paramValues.include_roles !== 'false'}
+                includePermissions={paramValues.include_permissions !== 'false'}
+              />
+            )}
+            {operation.id === 'changes.clone_database_access' && (
+              <AccessComparison
+                serverName={serverName}
+                source={paramValues.source_user ?? ''}
+                target={paramValues.target_user ?? ''}
+                includeRoles={paramValues.include_roles !== 'false'}
+                includePermissions={paramValues.include_permissions !== 'false'}
+                lookupId="database_access"
+                argName="user_name"
+                database={effectiveDatabase}
+              />
+            )}
+
+            <Group gap="sm" align="center">
+              <Button
+                variant="default"
+                leftSection={<IconSearch size={16} />}
+                onClick={runPreview}
+                loading={preview.isPending}
+                disabled={cannotFill.length > 0}
+              >
+                Preview
+              </Button>
+              <Button
+                color={pendingConfirm ? 'red' : undefined}
+                leftSection={<IconPlayerPlay size={16} />}
+                onClick={runExecute}
+                loading={execute.isPending}
+                disabled={preview.isPending || blocked || cannotFill.length > 0}
+              >
+                {targetLabel(pendingConfirm ? 'Review and execute' : 'Execute', server, where)}
+              </Button>
+              {execute.data && (
+                <Text size="sm" c="dimmed">
+                  {execute.data.elapsedMs} ms
+                </Text>
+              )}
+            </Group>
+            {cannotFill.length > 0 && (
+              <Text size="sm" c="orange">
+                Cannot run yet: {cannotFill[0]}
+              </Text>
+            )}
+            {execute.isError && (
+              <Alert color="red" variant="light" icon={<IconAlertTriangle size={18} />}>
+                {execute.error.message}
+              </Alert>
+            )}
+            {preview.isError && (
+              <Alert color="red" variant="light" icon={<IconAlertTriangle size={18} />}>
+                {preview.error.message}
+              </Alert>
+            )}
+
+            {/* Dry run: the real final statements. The template (with @placeholders) stays one click away. */}
+            <StatementList statements={preview.data?.statements} />
+            {/* Plain operations (no dry run): the same SQL with the values written in, for reading only. */}
+            {preview.data?.resolvedBatches && (
+              <Paper withBorder>
+                <Text size="xs" fw={600} px="sm" py={6} style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+                  SQL with your values{' '}
+                  <Text span size="xs" c="dimmed" fw={400}>
+                    (for reading: the run sends the template below and passes the values as parameters)
+                  </Text>
+                </Text>
+                <Code block style={{ whiteSpace: 'pre-wrap', background: 'transparent' }}>
+                  {preview.data.resolvedBatches.join('\nGO\n')}
+                </Code>
+              </Paper>
+            )}
+            {preview.data && (
+              <Accordion variant="contained" defaultValue={!preview.data.statements && !preview.data.resolvedBatches ? 'template' : null}>
+                <Accordion.Item value="template">
+                  <Accordion.Control>
+                    <Text size="xs">Template SQL</Text>
+                  </Accordion.Control>
+                  <Accordion.Panel>
+                    <Code block style={{ whiteSpace: 'pre-wrap' }}>
+                      {preview.data.batches.join('\nGO\n')}
+                    </Code>
+                  </Accordion.Panel>
+                </Accordion.Item>
+              </Accordion>
+            )}
+
+            <PreflightPanel checks={preview.data?.checks} />
+
+            {execute.data?.generatedPasswords && <GeneratedPasswords passwords={execute.data.generatedPasswords} />}
+            {execute.data?.snapshotPath && (
+              <Alert color="green" variant="light">
+                Snapshot saved: <Code>{execute.data.snapshotPath}</Code>
+              </Alert>
+            )}
+            {execute.data?.steps && <StepLog steps={execute.data.steps} />}
+            {execute.data && <ResultsGrid result={execute.data} exportName={`${serverName} ${operationId}`} />}
+          </Stack>
+        </Paper>
+      )}
+
+      {/* Confirm dialog for destructive runs: nothing destructive can be triggered from outside it. */}
+      <Modal
+        opened={confirming && pendingConfirm !== null && !blocked}
+        onClose={() => setConfirming(false)}
+        title={
+          <Text fw={700} c="red">
+            ⚠ Destructive operation — review and confirm
+          </Text>
+        }
+        size="lg"
+        centered
+      >
+        <Stack gap="md">
+          <Text size="sm">The statements below will run. Check the target and the recap, then confirm.</Text>
+          {pendingConfirm && <StatementList statements={pendingConfirm.statements} />}
+          {server && operation && pendingConfirm && (
+            <ConfirmRecap
+              rows={[
+                ['Server', `${server.name} (${server.environment})`],
+                ['Where', where],
+                ['Operation', operation.name],
+                ['Acts on', principalsOf(operation, paramValues).join(', ')],
+                ['Statements', statementSummary(pendingConfirm.statements)],
+              ]}
             />
           )}
-
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={runPreview}
-              disabled={preview.isPending || cannotFill.length > 0}
-              className="rounded border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              {preview.isPending ? 'Rendering…' : 'Preview'}
-            </button>
-            <button
-              type="button"
-              onClick={runExecute}
-              disabled={execute.isPending || preview.isPending || !confirmReady || blocked || cannotFill.length > 0}
-              className={`rounded px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
-                pendingConfirm ? 'bg-red-700 hover:bg-red-600' : 'bg-slate-800 hover:bg-slate-700'
-              }`}
-            >
-              {execute.isPending
-                ? 'Running…'
-                : targetLabel(pendingConfirm ? 'Confirm and execute' : 'Execute', server, where)}
-            </button>
-            {execute.isError && <span className="text-sm text-red-700">{execute.error.message}</span>}
-            {execute.data && <span className="text-sm text-slate-500">{execute.data.elapsedMs} ms</span>}
-          </div>
-          {cannotFill.length > 0 && <p className="text-sm text-amber-700">Cannot run yet: {cannotFill[0]}</p>}
-
-          {preview.isError && <p className="text-sm text-red-700">{preview.error.message}</p>}
-          {/* Dry run: the real final statements. The template (with @placeholders) stays one click away. */}
-          <StatementList statements={preview.data?.statements} />
-          {/* Plain operations (no dry run): the same SQL with the values written in, for reading only. */}
-          {preview.data?.resolvedBatches && (
-            <div className="overflow-hidden rounded border border-slate-200 text-xs">
-              <p className="border-b border-slate-100 bg-slate-50 px-3 py-1.5 font-medium text-slate-600">
-                SQL with your values{' '}
-                <span className="font-normal text-slate-500">
-                  (for reading: the run sends the template below and passes the values as parameters)
-                </span>
-              </p>
-              <pre className="whitespace-pre-wrap p-3 font-mono text-slate-800">{preview.data.resolvedBatches.join('\nGO\n')}</pre>
-            </div>
+          {pendingConfirm?.requiresServerName && (
+            <TextInput
+              label={
+                <>
+                  Production server: type <strong>{serverName}</strong> to enable the button.
+                </>
+              }
+              value={typedServerName}
+              onChange={(e) => setTypedServerName(e.currentTarget.value)}
+              autoComplete="off"
+              data-autofocus
+            />
           )}
-          {preview.data && (
-            <details open={!preview.data.statements && !preview.data.resolvedBatches} className="text-xs">
-              <summary className="cursor-pointer text-slate-500">Template SQL</summary>
-              <pre className="mt-1 whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-3 text-slate-700">
-                {preview.data.batches.join('\nGO\n')}
-              </pre>
-            </details>
-          )}
-
-          <PreflightPanel checks={preview.data?.checks} />
-
-          {pendingConfirm && !blocked && (
-            <div className="space-y-2 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900">
-              <p className="font-medium">⚠ Destructive operation. Review the statements above, then confirm.</p>
-              {server && operation && (
-                <ConfirmRecap
-                  rows={[
-                    ['Server', `${server.name} (${server.environment})`],
-                    ['Where', where],
-                    ['Operation', operation.name],
-                    ['Acts on', principalsOf(operation, paramValues).join(', ')],
-                    ['Statements', statementSummary(pendingConfirm.statements)],
-                  ]}
-                />
-              )}
-              {pendingConfirm.requiresServerName && (
-                <label className="block">
-                  <span className="mb-1 block">
-                    Production server: type <strong>{serverName}</strong> to enable the button.
-                  </span>
-                  <input
-                    value={typedServerName}
-                    onChange={(e) => setTypedServerName(e.target.value)}
-                    className="rounded border border-red-300 bg-white px-2 py-1.5"
-                  />
-                </label>
-              )}
-            </div>
-          )}
-
-          {execute.data?.generatedPasswords && <GeneratedPasswords passwords={execute.data.generatedPasswords} />}
-          {execute.data?.snapshotPath && (
-            <p className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-              Snapshot saved: <code className="break-all">{execute.data.snapshotPath}</code>
-            </p>
-          )}
-          {execute.data?.steps && <StepLog steps={execute.data.steps} />}
-          {execute.data && <ResultsGrid result={execute.data} exportName={`${serverName} ${operationId}`} />}
-        </div>
-      )}
-    </div>
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+            <Button color="red" disabled={!confirmReady} onClick={() => pendingConfirm && sendExecute(pendingConfirm)}>
+              {targetLabel('Confirm and execute', server, where)}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </Stack>
   )
 }

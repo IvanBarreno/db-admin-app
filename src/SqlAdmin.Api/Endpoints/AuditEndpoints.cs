@@ -26,7 +26,11 @@ public static class AuditEndpoints
                     Take: take == 0 ? 50 : Math.Min(take, 200));
 
                 var entries = await auditStore.QueryAsync(query, ct);
-                return TypedResults.Ok(entries.Select(AuditEntryResponse.From).ToList());
+                // Step counts for this page only, in one extra query.
+                var stepCounts = await auditStore.GetStepCountsAsync(entries.Select(e => e.Id).ToList(), ct);
+                return TypedResults.Ok(entries
+                    .Select(e => AuditEntryResponse.From(e, stepCounts.GetValueOrDefault(e.Id)))
+                    .ToList());
             })
             .WithName("ListAuditEntries")
             .WithSummary("Audit log entries, newest first, optionally filtered by user/server/status");

@@ -587,6 +587,82 @@ public sealed class RealServerTests(ApiFactory factory)
     }
 
     [ServerFact]
+    public async Task Typed_and_generated_passwords_can_be_mixed_and_only_generated_ones_are_shown()
+    {
+        var typedLogin = NewLoginName();
+        var generatedLogin = NewLoginName();
+        // Quotes and a backslash on purpose: the password travels inside JSON and then inside a T-SQL literal.
+        var typedPassword = "Typed'\"\\#" + Guid.NewGuid().ToString("N")[..12] + "aA1";
+        try
+        {
+            var values = new
+            {
+                login_names = JsonSerializer.Serialize(new[] { typedLogin, generatedLogin }),
+                // Only the typed one is sent; the other login is absent = "generate it".
+                passwords = JsonSerializer.Serialize(new Dictionary<string, string> { [typedLogin] = typedPassword }),
+            };
+
+            // The preview masks every password, typed or not.
+            var preview = await Preview("provisioning.create_sql_logins", values);
+            var statements = string.Join("\n", preview.Statements!.Select(s => s.Text));
+            Assert.Contains($"CREATE LOGIN [{typedLogin}] WITH PASSWORD = '***'", statements);
+            Assert.DoesNotContain(typedPassword, statements);
+
+            var run = await Execute("provisioning.create_sql_logins", values);
+            Assert.True(run.Success, run.Error);
+            var rows = run.ResultSets[0].Rows.ToDictionary(r => r[0]!.ToString()!, r => r);
+
+            // Typed: kept as typed and NOT echoed back. Generated: shown once.
+            Assert.Equal("(as typed)", rows[typedLogin][2]?.ToString());
+            var generatedPassword = rows[generatedLogin][2]!.ToString()!;
+            Assert.True(generatedPassword.Length >= 12);
+            Assert.NotEqual("(as typed)", generatedPassword);
+
+            // Both really work.
+            await using (var a = new SqlConnection(ConnectionAs(typedLogin, typedPassword).ConnectionString)) await a.OpenAsync();
+            await using (var b = new SqlConnection(ConnectionAs(generatedLogin, generatedPassword).ConnectionString)) await b.OpenAsync();
+
+            // Neither password reaches the audit log.
+            var audit = await _client.GetFromJsonAsync<List<AuditEntryResponse>>(
+                $"/api/audit?serverName={Server.Name}&skip=0&take=1", ApiFactory.Json);
+            Assert.DoesNotContain(typedPassword, audit![0].ParametersJson);
+            Assert.DoesNotContain(generatedPassword, audit[0].ParametersJson);
+
+            // Reset with a typed password for one of them: the token from the preview covers the typed value.
+            var newPassword = "Reset#" + Guid.NewGuid().ToString("N")[..14] + "aA1";
+            var reset = new
+            {
+                logins = JsonSerializer.Serialize(new[] { typedLogin, generatedLogin }),
+                passwords = JsonSerializer.Serialize(new Dictionary<string, string> { [generatedLogin] = newPassword }),
+            };
+            var resetPreview = await Preview("changes.reset_passwords", reset);
+            var resetRun = await Execute("changes.reset_passwords", reset, token: resetPreview.ConfirmToken);
+            Assert.True(resetRun.Success, resetRun.Error);
+            var resetRows = resetRun.ResultSets[0].Rows.ToDictionary(r => r[0]!.ToString()!, r => r);
+            Assert.Equal("(as typed)", resetRows[generatedLogin][2]?.ToString());
+            await using (var c = new SqlConnection(ConnectionAs(generatedLogin, newPassword).ConnectionString)) await c.OpenAsync();
+            await using (var d = new SqlConnection(ConnectionAs(typedLogin, resetRows[typedLogin][2]!.ToString()!).ConnectionString)) await d.OpenAsync();
+
+            // A password that is too long is refused at preview, naming the login and not the value.
+            var tooLong = new string('x', 129);
+            var refused = await ApiFactory.PostAsync(_client, "/api/operations/changes.reset_passwords/preview", Body(Server.Name, null, new
+            {
+                logins = JsonSerializer.Serialize(new[] { typedLogin }),
+                passwords = JsonSerializer.Serialize(new Dictionary<string, string> { [typedLogin] = tooLong }),
+            }));
+            Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+            var body = await refused.Content.ReadAsStringAsync();
+            Assert.Contains(typedLogin, body);
+            Assert.DoesNotContain(tooLong, body);
+        }
+        finally
+        {
+            await DropLoginIfExists(typedLogin);
+            await DropLoginIfExists(generatedLogin);
+        }
+    }
+
+    [ServerFact]
     public async Task No_integration_test_login_is_left_on_the_server()
     {
         // Safety net for the clean-up code above. xUnit does not promise an order, so a login from a test that

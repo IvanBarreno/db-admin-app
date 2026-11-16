@@ -1,10 +1,15 @@
-// Combobox.test.tsx — keyboard and mouse behaviour of the app's own combobox (WAI-ARIA pattern).
+// Combobox.test.tsx — behaviour of the app's picker (Combobox.tsx, built on Mantine's Combobox primitives).
 // The component is "controlled" (the parent owns the value), so a tiny Harness keeps the value in state,
 // exactly like ParamForm does. Events are sent with fireEvent: one DOM event per call, no extra library.
+//
+// What is OURS and therefore tested here: which rows are shown and when, that locked rows cannot be picked,
+// that free typing survives, and the attributes that keep password managers away. Positioning, ARIA wiring
+// and the arrow-key mechanics belong to Mantine.
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, screen } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { renderWithMantine } from '../test/render'
 import { Combobox, type ComboItem } from './Combobox'
 
 const items: ComboItem[] = [
@@ -32,10 +37,12 @@ function Harness({ initial = '', list = items, disabled = false }: { initial?: s
   )
 }
 
-const input = () => screen.getByRole('combobox') as HTMLInputElement
-/** Names in the popup, in display order (empty when it is closed). */
-const options = () => screen.queryAllByRole('option').map((o) => o.querySelector('span')?.textContent)
-const key = (k: string) => fireEvent.keyDown(input(), { key: k })
+const input = () => screen.getByRole('textbox') as HTMLInputElement
+/** Names in the dropdown, in display order (empty when it is closed). The name is the first text of each option. */
+const options = () => screen.queryAllByRole('option').map((o) => o.querySelector('p')?.textContent)
+const option = (name: string) => screen.getAllByRole('option').find((o) => o.querySelector('p')?.textContent === name)!
+// Mantine reads the PHYSICAL key (`event.code`), so both fields are sent, as a real keyboard does.
+const key = (k: string) => fireEvent.keyDown(input(), { key: k, code: k })
 
 afterEach(() => {
   cleanup() // unmount between tests (Vitest runs without globals, so RTL does not do it by itself)
@@ -44,19 +51,17 @@ afterEach(() => {
 
 describe('Combobox', () => {
   it('is closed until focused, then shows the whole list', () => {
-    render(<Harness />)
+    renderWithMantine(<Harness />)
     expect(options()).toEqual([])
-    expect(input().getAttribute('aria-expanded')).toBe('false')
 
     fireEvent.focus(input())
 
     expect(options()).toEqual(['alice', 'app_login', 'bob', 'carol'])
-    expect(input().getAttribute('aria-expanded')).toBe('true')
   })
 
   it('does not narrow the list by a value that is already in the box', () => {
     // The datalist bug from round 3: with "bob" in the field it looked as if only bob existed.
-    render(<Harness initial="bob" />)
+    renderWithMantine(<Harness initial="bob" />)
 
     fireEvent.focus(input())
 
@@ -64,7 +69,7 @@ describe('Combobox', () => {
   })
 
   it('narrows the list once the DBA types, matching names and hints', () => {
-    render(<Harness />)
+    renderWithMantine(<Harness />)
     fireEvent.focus(input())
 
     fireEvent.change(input(), { target: { value: 'CAR' } }) // case-insensitive, by name
@@ -74,8 +79,8 @@ describe('Combobox', () => {
     expect(options()).toEqual(['bob'])
   })
 
-  it('hides the popup when nothing matches but keeps the typed text (free typing)', () => {
-    render(<Harness />)
+  it('keeps the typed text when nothing matches (free typing)', () => {
+    renderWithMantine(<Harness />)
     fireEvent.focus(input())
 
     fireEvent.change(input(), { target: { value: 'zz_new_login' } })
@@ -85,89 +90,52 @@ describe('Combobox', () => {
     expect(onChange).toHaveBeenLastCalledWith('zz_new_login')
   })
 
-  it('picks the highlighted row with Enter and closes', () => {
-    render(<Harness />)
-    fireEvent.focus(input()) // highlight starts on the first row
+  it('picks a row with the mouse and closes', () => {
+    renderWithMantine(<Harness />)
+    fireEvent.focus(input())
 
-    key('Enter')
+    fireEvent.click(option('bob'))
 
-    expect(input().value).toBe('alice')
+    expect(input().value).toBe('bob')
     expect(options()).toEqual([])
   })
 
-  it('moves the highlight with the arrows and stops at both ends', () => {
-    render(<Harness />)
+  it('does not pick a locked row, and says why it is locked', () => {
+    renderWithMantine(<Harness />)
     fireEvent.focus(input())
 
-    key('ArrowUp') // already on the first row: stays
-    key('ArrowDown')
-    key('ArrowDown')
-    key('ArrowDown')
-    key('ArrowDown') // one more than the list has: stays on the last
-    key('Enter')
-    expect(input().value).toBe('carol')
-
-    fireEvent.focus(input())
-    key('ArrowUp')
-    key('Enter')
-    expect(input().value).toBe('bob')
-  })
-
-  it('does not pick a locked row, by keyboard or by mouse', () => {
-    render(<Harness />)
-    fireEvent.focus(input())
-
-    key('ArrowDown') // app_login (locked)
-    key('Enter')
-    fireEvent.mouseDown(screen.getByText('app_login'))
+    fireEvent.click(option('app_login'))
 
     expect(onChange).not.toHaveBeenCalled()
     expect(input().value).toBe('')
-    expect(options()).toHaveLength(4) // still open: nothing was chosen
-    expect(screen.getByText('app_login').closest('li')?.getAttribute('aria-disabled')).toBe('true')
-  })
-
-  it('shows why a row is locked instead of its hint', () => {
-    render(<Harness />)
-    fireEvent.focus(input())
-
+    expect(option('app_login').getAttribute('aria-disabled')).toBe('true')
     expect(screen.getByText(/view only — the account this app connects with/)).toBeTruthy()
   })
 
-  it('picks a row with the mouse', () => {
-    render(<Harness />)
+  it('picks with the keyboard, skipping the locked row', () => {
+    renderWithMantine(<Harness />)
     fireEvent.focus(input())
 
-    fireEvent.mouseDown(screen.getByText('bob'))
-
-    expect(input().value).toBe('bob')
-    expect(options()).toEqual([])
-  })
-
-  it('closes with Escape without changing the value, and ArrowDown opens it again', () => {
-    render(<Harness initial="bob" />)
-    fireEvent.focus(input())
-
-    key('Escape')
-    expect(options()).toEqual([])
-    expect(input().value).toBe('bob')
-
-    key('ArrowDown')
-    expect(options()).toHaveLength(4)
-  })
-
-  it('Enter does nothing while the popup is closed', () => {
-    render(<Harness />)
-    fireEvent.focus(input())
-    key('Escape')
-
+    key('ArrowDown') // alice
+    key('ArrowDown') // app_login is locked: the highlight goes on to bob
     key('Enter')
 
+    expect(input().value).toBe('bob')
+  })
+
+  it('closes with Escape without changing the value', () => {
+    renderWithMantine(<Harness initial="bob" />)
+    fireEvent.focus(input())
+
+    key('Escape')
+
+    expect(options()).toEqual([])
+    expect(input().value).toBe('bob')
     expect(onChange).not.toHaveBeenCalled()
   })
 
   it('closes when the field loses focus', () => {
-    render(<Harness />)
+    renderWithMantine(<Harness />)
     fireEvent.focus(input())
 
     fireEvent.blur(input())
@@ -175,32 +143,18 @@ describe('Combobox', () => {
     expect(options()).toEqual([])
   })
 
-  it('the ▾ button toggles the full list, even after typing narrowed it', () => {
-    render(<Harness />)
+  it('a disabled combobox never opens', () => {
+    renderWithMantine(<Harness disabled />)
+
     fireEvent.focus(input())
-    fireEvent.change(input(), { target: { value: 'car' } })
-    const button = screen.getByLabelText('Show the list')
 
-    fireEvent.mouseDown(button) // closes
     expect(options()).toEqual([])
-
-    fireEvent.mouseDown(button) // opens again, unfiltered
-    expect(options()).toHaveLength(4)
-  })
-
-  it('a disabled combobox never opens, and the button is off without items', () => {
-    render(<Harness disabled />)
-    fireEvent.focus(input())
-    expect(options()).toEqual([])
-    cleanup()
-
-    render(<Harness list={[]} />)
-    expect((screen.getByLabelText('Show the list') as HTMLButtonElement).disabled).toBe(true)
+    expect(input().disabled).toBe(true)
   })
 
   it('keeps the browser and password managers away from the field', () => {
     // Round 3 finding 2: Chrome's password manager replaced the list next to a password input.
-    render(<Harness />)
+    renderWithMantine(<Harness />)
 
     expect(input().getAttribute('autocomplete')).toBe('off')
     expect(input().getAttribute('data-lpignore')).toBe('true')

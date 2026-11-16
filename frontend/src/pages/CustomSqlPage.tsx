@@ -1,8 +1,12 @@
+import { Alert, Button, Group, Select, Skeleton, Stack, Text, Textarea } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
+import { IconPlayerPlay } from '@tabler/icons-react'
 import { useState } from 'react'
 import { EnvBadge } from '../components/EnvBadge'
 import { ResultsGrid } from '../components/ResultsGrid'
 import { TargetBar } from '../components/TargetBar'
 import { targetLabel } from '../components/target'
+import { PageHeader } from '../shell/PageHeader'
 import { useDatabases, useServers } from '../api/servers'
 import { useRunCustomSql } from '../api/customSql'
 
@@ -20,86 +24,94 @@ export default function CustomSqlPage() {
 
   function execute() {
     if (!serverName || sql.trim() === '') return
-    run.mutate({ serverName, database: database || null, sql })
+    run.mutate(
+      { serverName, database: database || null, sql },
+      {
+        onSuccess: (result) =>
+          notifications.show(
+            result.success
+              ? { color: 'green', title: 'Script finished', message: `${result.elapsedMs} ms` }
+              : { color: 'red', title: 'Script failed', message: result.error ?? 'See the details below.' },
+          ),
+        onError: (error) => notifications.show({ color: 'red', title: 'Could not run the script', message: error.message }),
+      },
+    )
   }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Custom SQL</h2>
+    <Stack gap="md">
+      <PageHeader title="Custom SQL" description="Free-form T-SQL, unrestricted. Every run is recorded in the audit log with the full text." />
 
       <TargetBar server={server} where={database || server?.defaultDatabase || '(login default database)'} summary="Free-form SQL, unrestricted" />
-      {servers.isPending && <p className="text-slate-500">Loading servers…</p>}
-      {servers.isError && <p className="text-red-700">Could not load servers: {servers.error.message}</p>}
 
-      {servers.data && (
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="text-sm">
-            <span className="mb-1 block text-slate-600">Server</span>
-            <select
-              value={serverName ?? ''}
-              onChange={(e) => {
-                setServerName(e.target.value || null)
-                setDatabase('')
-              }}
-              className="rounded border border-slate-300 px-2 py-1.5"
-            >
-              <option value="">Select a server…</option>
-              {servers.data.map((s) => (
-                <option key={s.name} value={s.name}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="text-sm">
-            <span className="mb-1 block text-slate-600">Database</span>
-            <select
-              value={database}
-              onChange={(e) => setDatabase(e.target.value)}
-              disabled={!serverName || databases.isPending}
-              className="rounded border border-slate-300 px-2 py-1.5 disabled:opacity-50"
-            >
-              <option value="">{server?.defaultDatabase ?? '(login default)'}</option>
-              {databases.data?.map((d) => (
-                <option key={d.name} value={d.name}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {server && <EnvBadge environment={server.environment} />}
-        </div>
+      {servers.isPending && <Skeleton height={36} maw={320} />}
+      {servers.isError && (
+        <Alert color="red" variant="light">
+          Could not load servers: {servers.error.message}
+        </Alert>
       )}
 
-      <textarea
+      {servers.data && (
+        <Group align="flex-end" gap="sm">
+          <Select
+            label="Server"
+            placeholder="Select a server…"
+            w={260}
+            data={servers.data.map((s) => s.name)}
+            value={serverName}
+            onChange={(next) => {
+              setServerName(next)
+              setDatabase('')
+            }}
+          />
+          <Select
+            label="Database"
+            placeholder={server?.defaultDatabase ?? '(login default)'}
+            w={260}
+            searchable
+            clearable
+            disabled={!serverName || databases.isPending}
+            data={(databases.data ?? []).map((d) => d.name)}
+            value={database || null}
+            onChange={(next) => setDatabase(next ?? '')}
+          />
+          {server && (
+            <div style={{ paddingBottom: 6 }}>
+              <EnvBadge environment={server.environment} />
+            </div>
+          )}
+        </Group>
+      )}
+
+      <Textarea
+        aria-label="SQL to run"
         value={sql}
-        onChange={(e) => setSql(e.target.value)}
+        onChange={(e) => setSql(e.currentTarget.value)}
         placeholder="SELECT ..."
-        rows={12}
+        autosize
+        minRows={12}
+        maxRows={32}
         spellCheck={false}
-        className="w-full rounded border border-slate-300 p-3 font-mono text-sm"
+        styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', fontSize: 'var(--mantine-font-size-sm)' } }}
       />
 
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={execute}
-          disabled={!serverName || sql.trim() === '' || run.isPending}
-          className="rounded bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
-          {run.isPending ? 'Running…' : targetLabel('Execute', server, database || null)}
-        </button>
-        {run.isError && <span className="text-sm text-red-700">{run.error.message}</span>}
+      <Group gap="sm">
+        <Button leftSection={<IconPlayerPlay size={16} />} onClick={execute} loading={run.isPending} disabled={!serverName || sql.trim() === ''}>
+          {targetLabel('Execute', server, database || null)}
+        </Button>
         {run.data && (
-          <span className="text-sm text-slate-500">
+          <Text size="sm" c="dimmed">
             {run.data.elapsedMs} ms
-          </span>
+          </Text>
         )}
-      </div>
+      </Group>
+      {run.isError && (
+        <Alert color="red" variant="light">
+          {run.error.message}
+        </Alert>
+      )}
 
       {run.data && <ResultsGrid result={run.data} exportName={`${serverName} custom sql`} />}
-    </div>
+    </Stack>
   )
 }

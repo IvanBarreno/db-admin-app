@@ -20,9 +20,12 @@ public sealed record AuditEntryResponse(
     string Sql,
     string Status,
     string? Detail,
-    string? ParametersJson)
+    string? ParametersJson,
+    // Number of per-database steps recorded for this run (0 for most runs). Lets the page disable
+    // "Details" on rows that have nothing more to show, without fetching the steps of every row.
+    int StepCount = 0)
 {
-    public static AuditEntryResponse From(AuditEntry entry) => new(
+    public static AuditEntryResponse From(AuditEntry entry, int stepCount = 0) => new(
         entry.Id,
         entry.ExecutedAtUtc,
         entry.ExecutedBy,
@@ -31,5 +34,6 @@ public sealed record AuditEntryResponse(
         entry.Sql,
         entry.Status,
         entry.Detail,
-        entry.ParametersJson);
+        entry.ParametersJson,
+        stepCount);
 }

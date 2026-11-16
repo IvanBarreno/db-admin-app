@@ -17,6 +17,19 @@ public sealed class EfAuditStore(AuditDbContext db) : IAuditStore
             .OrderBy(s => s.StepNo)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyDictionary<long, int>> GetStepCountsAsync(IReadOnlyCollection<long> auditEntryIds, CancellationToken ct)
+    {
+        if (auditEntryIds.Count == 0) return new Dictionary<long, int>();
+
+        // One grouped query for the whole page (SELECT AuditEntryId, COUNT(*) ... GROUP BY AuditEntryId),
+        // instead of one COUNT per row.
+        return await db.Set<AuditStep>().AsNoTracking()
+            .Where(s => auditEntryIds.Contains(s.AuditEntryId))
+            .GroupBy(s => s.AuditEntryId)
+            .Select(g => new { EntryId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.EntryId, x => x.Count, ct);
+    }
+
     public async Task<IReadOnlyList<AuditEntry>> QueryAsync(AuditQuery query, CancellationToken ct)
     {
         var entries = db.AuditLog.AsNoTracking().AsQueryable();

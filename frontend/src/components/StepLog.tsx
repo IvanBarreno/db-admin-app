@@ -1,3 +1,5 @@
+import { Accordion, Table, Text } from '@mantine/core'
+
 /** One per-database outcome. Both the execute response and /api/audit/{id}/steps fit this shape. */
 export interface StepRow {
   database?: string | null
@@ -6,10 +8,11 @@ export interface StepRow {
   message?: string | null
 }
 
+const STATUS_COLOR: Record<string, string> = { ERROR: 'red', SKIPPED: 'yellow' }
+
 /**
  * Summary line ("47 databases: 45 OK, 2 errors") with the per-database list expandable below.
- * Native <details> keeps it dependency-free and collapsed by default; it opens itself when
- * anything failed so errors are never hidden.
+ * Collapsed by default; it opens itself when anything failed so errors are never hidden.
  */
 export function StepLog({ steps }: { steps: StepRow[] }) {
   if (steps.length === 0) return null
@@ -23,24 +26,30 @@ export function StepLog({ steps }: { steps: StepRow[] }) {
   if (errors > 0) parts.push(`${errors} ${errors === 1 ? 'error' : 'errors'}`)
 
   return (
-    <details open={errors > 0} className="rounded border border-slate-200 text-sm">
-      <summary className="cursor-pointer px-3 py-2 font-medium text-slate-700">
-        {steps.length} {steps.length === 1 ? 'database' : 'databases'}: {parts.join(', ')}
-      </summary>
-      <table className="w-full border-collapse text-xs">
-        <tbody>
-          {steps.map((s, i) => (
-            <tr key={i} className="border-t border-slate-100 align-top">
-              <td className="px-3 py-1 font-mono">{s.database ?? '—'}</td>
-              <td className={`px-3 py-1 ${s.status === 'ERROR' ? 'text-red-700' : s.status === 'SKIPPED' ? 'text-amber-700' : 'text-emerald-700'}`}>
-                {s.status}
-              </td>
-              <td className="px-3 py-1 text-slate-500">{s.rowCount ?? 0} rows</td>
-              <td className="px-3 py-1 text-slate-600">{s.message}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </details>
+    // defaultValue opens the only item at the start; the page remounts this component per result, so a
+    // result with errors is always open.
+    <Accordion variant="contained" defaultValue={errors > 0 ? 'steps' : null}>
+      <Accordion.Item value="steps">
+        <Accordion.Control>
+          <Text size="sm" fw={500}>
+            {steps.length} {steps.length === 1 ? 'database' : 'databases'}: {parts.join(', ')}
+          </Text>
+        </Accordion.Control>
+        <Accordion.Panel>
+          <Table fz="xs" verticalSpacing={4} withRowBorders>
+            <Table.Tbody>
+              {steps.map((s, i) => (
+                <Table.Tr key={i}>
+                  <Table.Td ff="monospace">{s.database ?? '—'}</Table.Td>
+                  <Table.Td c={STATUS_COLOR[s.status] ?? 'green'}>{s.status}</Table.Td>
+                  <Table.Td c="dimmed">{s.rowCount ?? 0} rows</Table.Td>
+                  <Table.Td>{s.message}</Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Accordion.Panel>
+      </Accordion.Item>
+    </Accordion>
   )
 }
