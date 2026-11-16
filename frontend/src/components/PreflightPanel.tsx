@@ -1,3 +1,5 @@
+import { Alert, Stack, Text } from '@mantine/core'
+import { IconAlertTriangle, IconCircleX } from '@tabler/icons-react'
 import type { Schema } from '../api/client'
 
 export type CheckResult = Schema<'CheckResult'>
@@ -17,25 +19,29 @@ export function PreflightPanel({ checks }: { checks: readonly PanelCheck[] | nul
   const passed = checks.length - failed.length
 
   return (
-    <div className="space-y-1 text-sm">
+    <Stack gap={6}>
       {failed.map((c, i) => (
-        <p
+        <Alert
           key={`${c.stepTitle ?? ''}${c.id}${i}`}
-          className={`rounded border px-3 py-2 ${
-            c.blocking ? 'border-red-300 bg-red-50 text-red-900' : 'border-amber-300 bg-amber-50 text-amber-900'
-          }`}
+          color={c.blocking ? 'red' : 'yellow'}
+          variant="light"
+          icon={c.blocking ? <IconCircleX size={18} /> : <IconAlertTriangle size={18} />}
+          title={c.blocking ? 'Blocked' : 'Warning'}
+          p="xs"
         >
-          <strong>{c.blocking ? '✖ Blocked' : '⚠ Warning'}</strong>
-          {c.stepTitle && <span className="text-xs opacity-70"> · {c.stepTitle}</span>}
-          {' — '}
+          {c.stepTitle && (
+            <Text span size="xs" c="dimmed">
+              {c.stepTitle} ·{' '}
+            </Text>
+          )}
           {c.message}
-        </p>
+        </Alert>
       ))}
       {passed > 0 && (
-        <p className="text-xs text-emerald-700">
+        <Text size="xs" c="green">
           ✓ {passed} preflight {passed === 1 ? 'check' : 'checks'} passed
-        </p>
+        </Text>
       )}
-    </div>
+    </Stack>
   )
 }

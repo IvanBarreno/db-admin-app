@@ -102,10 +102,11 @@ public sealed record OperationParameter
 
     /// <summary>
     /// Password parameters only (YAML <c>generate_for_each: logins</c>): the name of a LIST parameter of the same
-    /// operation. At execute time the app generates one strong password per item of that list and binds them as a
-    /// JSON object <c>{"item": "password"}</c>, which the script reads with <c>OPENJSON(@name)</c> ([key] / value).
-    /// The DBA never types this value; the form shows a note instead of an input. The script returns each
-    /// password in its result grid (only for the items that succeeded); it is never written to the audit log.
+    /// operation: one password per item of that list. The form shows a row per item and sends the passwords the
+    /// DBA typed as <c>{"item": "password"}</c>; at execute time the app generates one for every item left empty
+    /// and binds <c>{"item": {"p": "password", "g": true|false}}</c> (g = generated), which the script reads with
+    /// <c>OPENJSON(@name)</c> + <c>JSON_VALUE</c>. The script returns a generated password in its result grid (only
+    /// for the items that succeeded); nothing is ever written to the audit log.
     /// </summary>
     public string? GenerateForEach { get; init; }
 

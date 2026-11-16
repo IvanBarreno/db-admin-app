@@ -1,5 +1,7 @@
+import { Badge, Checkbox, Group, Paper, ScrollArea, Stack, Text, TextInput } from '@mantine/core'
 import { useState } from 'react'
 import type { OperationParameter } from '../api/operations'
+import { LookupNotice } from './LookupNotice'
 import { encodeList, parseList } from './lookupText'
 import { useLookupState } from './lookupState'
 
@@ -60,68 +62,107 @@ export function RoleChecklist({
   }
 
   const shown = items.filter((i) => i.value.toLowerCase().includes(filter.toLowerCase()))
+  const changes = adds.size + drops.size
   const summary =
-    adds.size + drops.size === 0
+    changes === 0
       ? 'No changes'
       : [adds.size > 0 && `ADD ${[...adds].sort().join(', ')}`, drops.size > 0 && `DROP ${[...drops].sort().join(', ')}`]
           .filter(Boolean)
           .join(' · ')
 
   return (
-    <div className="rounded border border-slate-200 text-sm">
-      <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-3 py-1.5">
-        <span className="font-medium text-slate-700" title="Tick a role to add the principal to it, untick one it has to remove it.">
-          roles
-        </span>
+    <Paper withBorder>
+      <Group gap="sm" px="sm" py={6} wrap="wrap" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+        <Text size="sm" fw={500} title="Tick a role to add the principal to it, untick one it has to remove it.">
+          Roles
+        </Text>
         {usable && (
-          <span className={`text-xs ${adds.size + drops.size > 0 ? 'font-medium text-slate-900' : 'text-slate-500'}`}>{summary}</span>
+          <Text size="xs" c={changes > 0 ? undefined : 'dimmed'} fw={changes > 0 ? 500 : undefined}>
+            {summary}
+          </Text>
         )}
         {usable && items.length > 12 && (
-          <input
+          <TextInput
+            size="xs"
+            ml="auto"
+            w={160}
             type="search"
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={(e) => setFilter(e.currentTarget.value)}
             placeholder="filter…"
-            className="ml-auto rounded border border-slate-300 px-2 py-0.5 text-xs"
+            aria-label="Filter roles"
           />
         )}
-      </div>
+      </Group>
 
-      <div className="max-h-60 overflow-y-auto px-3 py-1.5">
-        {state.status === 'loading' && <p className="text-slate-500">Loading roles…</p>}
+      <ScrollArea.Autosize mah={260} type="auto">
+        <Stack gap={4} px="sm" py={6}>
+          {state.status === 'loading' && (
+            <Text size="sm" c="dimmed">
+              Loading roles…
+            </Text>
+          )}
 
-        {(state.status === 'idle' || state.status === 'waiting' || state.status === 'empty' || state.status === 'unavailable') && (
-          <p className={state.status === 'unavailable' ? 'text-amber-700' : 'text-slate-500'}>
-            {state.status === 'waiting' ? `${state.reason} Its current roles will be ticked.` : state.reason}
-            {state.retryable && (
-              <button type="button" onClick={state.retry} className="ml-2 underline">
-                Retry
-              </button>
-            )}
-          </p>
-        )}
+          {state.status !== 'ready' && state.status !== 'loading' && (
+            <LookupNotice state={state} suffix={state.status === 'waiting' ? 'Its current roles will be ticked.' : undefined} />
+          )}
 
-        {usable &&
-          shown.map((item) => {
-            const extra = item.extra as Record<string, unknown>
-            const member = isMember(extra)
-            const ticked = isTicked(item)
-            const change = member && !ticked ? 'drop' : !member && ticked ? 'add' : null
-            const description = typeof extra.description === 'string' ? extra.description : null
-            return (
-              <label key={item.value} className="flex flex-wrap items-center gap-x-2 py-0.5" title={description ?? undefined}>
-                <input type="checkbox" checked={ticked} onChange={() => toggle(item)} />
-                <span className={`font-mono text-xs ${change === 'drop' ? 'text-red-700 line-through' : 'text-slate-800'}`}>{item.value}</span>
-                {extra.is_high_risk === true && <span className="text-xs font-medium text-amber-700">⚠ high risk</span>}
-                {extra.is_fixed_role === false && <span className="text-xs text-slate-500">custom</span>}
-                {change === 'add' && <span className="text-xs font-medium text-emerald-700">will add</span>}
-                {change === 'drop' && <span className="text-xs font-medium text-red-700">will drop</span>}
-                {change === null && member && <span className="text-xs text-slate-400">member</span>}
-                {description && <span className="text-xs text-slate-500">— {description}</span>}
-              </label>
-            )
-          })}
-      </div>
-    </div>
+          {usable &&
+            shown.map((item) => {
+              const extra = item.extra as Record<string, unknown>
+              const member = isMember(extra)
+              const ticked = isTicked(item)
+              const change = member && !ticked ? 'drop' : !member && ticked ? 'add' : null
+              const description = typeof extra.description === 'string' ? extra.description : null
+              return (
+                <Checkbox
+                  key={item.value}
+                  size="xs"
+                  checked={ticked}
+                  onChange={() => toggle(item)}
+                  title={description ?? undefined}
+                  label={
+                    <Group gap="xs" wrap="wrap" style={{ rowGap: 0 }}>
+                      <Text size="xs" ff="monospace" c={change === 'drop' ? 'red' : undefined} td={change === 'drop' ? 'line-through' : undefined}>
+                        {item.value}
+                      </Text>
+                      {extra.is_high_risk === true && (
+                        <Badge size="xs" color="orange" variant="light">
+                          ⚠ high risk
+                        </Badge>
+                      )}
+                      {extra.is_fixed_role === false && (
+                        <Badge size="xs" color="gray" variant="light">
+                          custom
+                        </Badge>
+                      )}
+                      {change === 'add' && (
+                        <Badge size="xs" color="green" variant="light">
+                          will add
+                        </Badge>
+                      )}
+                      {change === 'drop' && (
+                        <Badge size="xs" color="red" variant="light">
+                          will drop
+                        </Badge>
+                      )}
+                      {change === null && member && (
+                        <Text size="xs" c="dimmed">
+                          member
+                        </Text>
+                      )}
+                      {description && (
+                        <Text size="xs" c="dimmed">
+                          — {description}
+                        </Text>
+                      )}
+                    </Group>
+                  }
+                />
+              )
+            })}
+        </Stack>
+      </ScrollArea.Autosize>
+    </Paper>
   )
 }

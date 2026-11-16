@@ -1,3 +1,5 @@
+import { Alert, Button, Group, Menu, Select, Skeleton, Stack, Tabs, Text } from '@mantine/core'
+import { IconChevronDown } from '@tabler/icons-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { LoginDiff } from '../components/LoginDiff'
@@ -6,6 +8,7 @@ import { lookupHint } from '../components/lookupText'
 import { LookupTable } from '../components/LookupTable'
 import { TargetBar } from '../components/TargetBar'
 import { operationLink, operationsFor } from '../components/useInOperation'
+import { PageHeader } from '../shell/PageHeader'
 import { useLookup, type LookupItem } from '../api/lookups'
 import { useOperations } from '../api/operations'
 import { useDatabases, useServers } from '../api/servers'
@@ -68,92 +71,95 @@ export default function ExplorerPage() {
   const rowAction =
     serverName && targets.length > 0
       ? (item: LookupItem) => (
-          <select
-            value=""
-            aria-label={`Use ${item.value} in an operation`}
-            onChange={(e) => {
-              const target = targets.find((t) => t.operation.id === e.target.value)
-              if (target) navigate(operationLink(serverName, tab?.db ? database : '', target.operation.id, target.param.name, item.value))
-            }}
-            className="rounded border border-slate-300 px-1 py-0.5 text-xs text-slate-600"
-          >
-            <option value="">Use in…</option>
-            {targets.map((t) => (
-              <option key={t.operation.id} value={t.operation.id} title={t.operation.description ?? undefined}>
-                [{t.operation.category}] {t.operation.name}
-                {t.operation.destructive ? ' ⚠' : ''}
-              </option>
-            ))}
-          </select>
+          <Menu position="bottom-end" withinPortal shadow="md" width={320}>
+            <Menu.Target>
+              <Button size="compact-xs" variant="default" rightSection={<IconChevronDown size={12} />} aria-label={`Use ${item.value} in an operation`}>
+                Use in…
+              </Button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              {targets.map((t) => (
+                <Menu.Item
+                  key={t.operation.id}
+                  color={t.operation.destructive ? 'red' : undefined}
+                  onClick={() => navigate(operationLink(serverName, tab?.db ? database : '', t.operation.id, t.param.name, item.value))}
+                >
+                  <Text size="xs" c="dimmed" span>
+                    [{t.operation.category}]
+                  </Text>{' '}
+                  {t.operation.name}
+                  {t.operation.destructive ? ' ⚠' : ''}
+                </Menu.Item>
+              ))}
+            </Menu.Dropdown>
+          </Menu>
         )
       : undefined
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Explorer</h2>
+    <Stack gap="md">
+      <PageHeader title="Explorer" description="Browse what is on a server without writing a query. Nothing here changes it." />
 
       <TargetBar server={server} where={where} summary="Browsing (read-only)" />
 
-      {servers.isError && <p className="text-red-700">Could not load servers: {servers.error.message}</p>}
+      {servers.isPending && <Skeleton height={36} maw={320} />}
+      {servers.isError && (
+        <Alert color="red" variant="light">
+          Could not load servers: {servers.error.message}
+        </Alert>
+      )}
 
       {servers.data && (
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="text-sm">
-            <span className="mb-1 block text-slate-600">Server</span>
-            <select
-              value={serverName ?? ''}
-              onChange={(e) => {
-                setServerName(e.target.value || null)
-                setDatabase('')
-              }}
-              className="rounded border border-slate-300 px-2 py-1.5"
-            >
-              <option value="">Select a server…</option>
-              {servers.data.map((s) => (
-                <option key={s.name} value={s.name}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
+        <Group align="flex-end" gap="sm">
+          <Select
+            label="Server"
+            placeholder="Select a server…"
+            w={260}
+            data={servers.data.map((s) => s.name)}
+            value={serverName}
+            onChange={(next) => {
+              setServerName(next)
+              setDatabase('')
+            }}
+          />
 
           {tab?.db && (
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">Database</span>
-              <select
-                value={database}
-                onChange={(e) => setDatabase(e.target.value)}
-                disabled={databases.isPending}
-                className="rounded border border-slate-300 px-2 py-1.5"
-              >
-                <option value="">Select a database…</option>
-                {databases.data?.map((d) => (
-                  <option key={d.name} value={d.name} disabled={!d.isOnline}>
-                    {d.name}
-                    {d.isOnline ? '' : ` (${d.state.toLowerCase()})`}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <Select
+              label="Database"
+              placeholder="Select a database…"
+              w={260}
+              searchable
+              disabled={databases.isPending}
+              data={(databases.data ?? []).map((d) => ({
+                value: d.name,
+                label: d.isOnline ? d.name : `${d.name} (${d.state.toLowerCase()})`,
+                disabled: !d.isOnline,
+              }))}
+              value={database || null}
+              onChange={(next) => setDatabase(next ?? '')}
+            />
           )}
-        </div>
+        </Group>
       )}
 
       {serverName && (
         <>
-          <nav className="space-y-1 text-sm">
-            <TabRow label="Server" tabs={SERVER_TABS} current={tabId} onPick={setTabId} />
-            <TabRow label="Database" tabs={DATABASE_TABS} current={tabId} onPick={setTabId} />
-            <div className="flex items-center gap-1">
-              <span className="w-20 text-xs uppercase tracking-wide text-slate-400">Principal</span>
-              <TabButton active={tabId === LOGIN_360} onClick={() => setTabId(LOGIN_360)}>
-                Login 360°
-              </TabButton>
-              <TabButton active={tabId === COMPARE} onClick={() => setTabId(COMPARE)}>
-                Compare logins
-              </TabButton>
-            </div>
-          </nav>
+          {/* One tab strip, three groups. The group names are small captions; the value of the active tab is a plain string. */}
+          <Tabs value={tabId} onChange={(next) => next && setTabId(next)}>
+            <Stack gap={4}>
+              <TabGroup caption="Server" tabs={SERVER_TABS} />
+              <TabGroup caption="Database" tabs={DATABASE_TABS} />
+              <Group gap="xs" wrap="nowrap">
+                <Text size="xs" tt="uppercase" c="dimmed" w={72}>
+                  Principal
+                </Text>
+                <Tabs.List style={{ border: 'none' }}>
+                  <Tabs.Tab value={LOGIN_360}>Login 360°</Tabs.Tab>
+                  <Tabs.Tab value={COMPARE}>Compare logins</Tabs.Tab>
+                </Tabs.List>
+              </Group>
+            </Stack>
+          </Tabs>
 
           {tabId === LOGIN_360 && <Login360 serverName={serverName} login={login} onLogin={setLogin} />}
           {/* key: a different server on the left means different logins, so start the comparison again. */}
@@ -163,7 +169,11 @@ export default function ExplorerPage() {
             <LookupTable key={tab.id} serverName={serverName} lookupId={tab.lookup} title={tab.label} rowAction={rowAction} />
           )}
 
-          {tab?.db && !database && <p className="text-slate-500">Select a database to list its {tab.label.toLowerCase()}.</p>}
+          {tab?.db && !database && (
+            <Text c="dimmed" size="sm">
+              Select a database to list its {tab.label.toLowerCase()}.
+            </Text>
+          )}
           {tab?.db && database && (
             <LookupTable
               key={`${tab.id}-${database}`}
@@ -176,32 +186,25 @@ export default function ExplorerPage() {
           )}
         </>
       )}
-    </div>
+    </Stack>
   )
 }
 
-function TabRow({ label, tabs, current, onPick }: { label: string; tabs: Tab[]; current: string; onPick: (id: string) => void }) {
+/** A captioned row of tabs. All rows share ONE <Tabs> (above), so exactly one tab is active across the three rows. */
+function TabGroup({ caption, tabs }: { caption: string; tabs: Tab[] }) {
   return (
-    <div className="flex flex-wrap items-center gap-1">
-      <span className="w-20 text-xs uppercase tracking-wide text-slate-400">{label}</span>
-      {tabs.map((t) => (
-        <TabButton key={t.id} active={current === t.id} onClick={() => onPick(t.id)}>
-          {t.label}
-        </TabButton>
-      ))}
-    </div>
-  )
-}
-
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded px-2 py-1 ${active ? 'bg-slate-800 font-medium text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-    >
-      {children}
-    </button>
+    <Group gap="xs" wrap="nowrap" align="center">
+      <Text size="xs" tt="uppercase" c="dimmed" w={72}>
+        {caption}
+      </Text>
+      <Tabs.List style={{ border: 'none', flexWrap: 'wrap' }}>
+        {tabs.map((t) => (
+          <Tabs.Tab key={t.id} value={t.id}>
+            {t.label}
+          </Tabs.Tab>
+        ))}
+      </Tabs.List>
+    </Group>
   )
 }
 
@@ -211,23 +214,23 @@ function Login360({ serverName, login, onLogin }: { serverName: string; login: s
   const args = { login_name: login }
 
   return (
-    <div className="space-y-4">
-      <label className="block text-sm">
-        <span className="mb-1 block text-slate-600">Login</span>
-        {/* The app's own combobox (full list on focus, ▾ button), not a native datalist. Read-only page: protected logins may be viewed. */}
-        <Combobox
-          value={login}
-          onChange={onLogin}
-          items={(logins.data?.items ?? []).map((i) => ({ value: i.value, hint: lookupHint(i) }))}
-          placeholder={logins.isPending ? 'loading…' : 'pick or type a login'}
-          className="w-72"
-        />
-      </label>
+    <Stack gap="md">
+      {/* The app's own combobox (full list on focus). Read-only page: protected logins may be viewed. */}
+      <Combobox
+        label="Login"
+        value={login}
+        onChange={onLogin}
+        items={(logins.data?.items ?? []).map((i) => ({ value: i.value, hint: lookupHint(i) }))}
+        placeholder={logins.isPending ? 'loading…' : 'pick or type a login'}
+        w={288}
+      />
 
       {login === '' ? (
-        <p className="text-slate-500">Choose a login to see its status, roles, sessions, jobs and databases.</p>
+        <Text c="dimmed" size="sm">
+          Choose a login to see its status, roles, sessions, jobs and databases.
+        </Text>
       ) : (
-        <div className="space-y-4">
+        <Stack gap="md">
           <LookupTable key={`s-${login}`} serverName={serverName} lookupId="login_status" args={args} title="Status" emptyText="No such login." />
           <LookupTable key={`i-${login}`} serverName={serverName} lookupId="login_impact" args={args} title="What it holds (counts)" />
           <LookupTable
@@ -242,11 +245,11 @@ function Login360({ serverName, login, onLogin }: { serverName: string; login: s
           <LookupTable key={`se-${login}`} serverName={serverName} lookupId="sessions" args={args} title="Open sessions" emptyText="No open sessions." />
           <LookupTable key={`j-${login}`} serverName={serverName} lookupId="jobs" args={args} title="SQL Agent jobs it owns" emptyText="Owns no jobs." />
           <LookupTable key={`d-${login}`} serverName={serverName} lookupId="databases_owned" args={args} title="Databases it owns" emptyText="Owns no databases." />
-          <p className="text-xs text-slate-500">
+          <Text size="xs" c="dimmed">
             Its users in every database: run the <em>User mapping</em> or <em>Database role memberships (all databases)</em> audit on the Operations page.
-          </p>
-        </div>
+          </Text>
+        </Stack>
       )}
-    </div>
+    </Stack>
   )
 }

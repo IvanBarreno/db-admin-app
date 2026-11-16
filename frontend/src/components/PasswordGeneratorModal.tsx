@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { ActionIcon, Alert, Anchor, Button, Checkbox, Code, CopyButton, Divider, Group, Modal, NumberInput, SimpleGrid, Slider, Stack, Text, Tooltip } from '@mantine/core'
+import { IconCheck, IconCopy, IconRefresh } from '@tabler/icons-react'
+import { useEffect, useState } from 'react'
 import { useGeneratePassword } from '../api/secrets'
 import {
   FACTORY_PASSWORD_SETTINGS,
@@ -14,31 +15,26 @@ import {
  * runs, so the DBA can read, copy and (if needed) retype it. It opens on the app-wide defaults; changes
  * here apply to this password only, unless "save as default" is ticked.
  *
- * Rendered through a portal: the field lives inside a <label>, and clicks inside a dialog nested in a
- * label would be forwarded to the label's input.
+ * Mount it only while it is needed (`{open && <PasswordGeneratorModal … />}`): every mount starts from the
+ * saved defaults and generates a fresh password. Mantine's Modal provides the focus trap, Esc to close,
+ * the backdrop, and renders in a portal (outside the form), so clicks in it never reach the field's label.
  */
 export function PasswordGeneratorModal({
   onUse,
   onClose,
+  title = 'Generate password',
 }: {
   onUse: (password: string) => void
   onClose: () => void
+  /** E.g. "Password for [app_reports]" when the modal is opened from one row of a list. */
+  title?: string
 }) {
-  const dialog = useRef<HTMLDialogElement>(null)
   const [settings, setSettings] = useState<PasswordSettings>(loadPasswordSettings)
   const [saveAsDefault, setSaveAsDefault] = useState(false)
-  // The password that was last copied; "Copied" shows only while it is still the current one.
-  const [copiedValue, setCopiedValue] = useState('')
   const generate = useGeneratePassword()
 
   const classCount = [settings.upper, settings.lower, settings.digits, settings.symbols].filter(Boolean).length
   const password = generate.data?.password ?? ''
-  const copied = password !== '' && copiedValue === password
-
-  // Native modal dialog: focus trap, Esc to close and backdrop come from the browser.
-  useEffect(() => {
-    dialog.current?.showModal()
-  }, [])
 
   // Generate on open and whenever an option changes (the key stands for "the options as a value").
   const optionsKey = JSON.stringify(settings)
@@ -52,124 +48,131 @@ export function PasswordGeneratorModal({
     setSettings((current) => ({ ...current, ...patch }))
   }
 
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(password)
-      setCopiedValue(password)
-    } catch {
-      // Clipboard can be blocked (non-secure context); the value stays selectable on screen.
-    }
-  }
-
   function use() {
     if (saveAsDefault) savePasswordSettings(settings)
     onUse(password)
   }
 
-  return createPortal(
-    <dialog
-      ref={dialog}
-      onClose={onClose}
-      onClick={(e) => e.target === dialog.current && dialog.current?.close()} // click on the backdrop
-      className="m-auto w-full max-w-md rounded-lg border border-slate-300 p-0 shadow-xl backdrop:bg-slate-900/40"
-    >
-      <div className="space-y-4 p-5 text-sm">
-        <h3 className="text-base font-semibold text-slate-900">Generate password</h3>
-
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <code className="min-h-9 flex-1 select-all break-all rounded border border-slate-300 bg-slate-50 px-2 py-1.5 font-mono">
+  return (
+    <Modal opened onClose={onClose} title={title} centered size="md">
+      <Stack gap="md">
+        <Stack gap={4}>
+          <Group gap="xs" wrap="nowrap" align="stretch">
+            {/* block: a full-width box instead of inline code, so a long password wraps inside it. */}
+            <Code block style={{ flex: 1, minHeight: 36, wordBreak: 'break-all', whiteSpace: 'pre-wrap', userSelect: 'all' }}>
               {generate.isPending && !password ? '…' : password}
-            </code>
-            <button type="button" onClick={copy} disabled={!password} className="rounded border border-slate-300 px-2 py-1.5 hover:bg-slate-50 disabled:opacity-50">
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-            <button
-              type="button"
-              onClick={() => mutate(settings)}
-              disabled={classCount === 0 || generate.isPending}
-              className="rounded border border-slate-300 px-2 py-1.5 hover:bg-slate-50 disabled:opacity-50"
-            >
-              New
-            </button>
-          </div>
-          {generate.isError && <p className="text-red-700">{generate.error.message}</p>}
-          {classCount === 0 && <p className="text-red-700">Choose at least one kind of character.</p>}
-          {generate.data?.warning && <p className="text-amber-700">{generate.data.warning}</p>}
-        </div>
+            </Code>
+            {/* CopyButton owns the "copied" state: `copied` stays true for a moment after `copy()`. */}
+            <CopyButton value={password}>
+              {({ copied, copy }) => (
+                <Tooltip label={copied ? 'Copied' : 'Copy'}>
+                  <ActionIcon variant="default" size="lg" onClick={copy} disabled={!password} aria-label="Copy the password">
+                    {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </CopyButton>
+            <Tooltip label="Another one with the same options">
+              <ActionIcon
+                variant="default"
+                size="lg"
+                onClick={() => mutate(settings)}
+                disabled={classCount === 0}
+                loading={generate.isPending}
+                aria-label="Generate another password"
+              >
+                <IconRefresh size={16} />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
+          {generate.isError && (
+            <Text size="sm" c="red">
+              {generate.error.message}
+            </Text>
+          )}
+          {classCount === 0 && (
+            <Text size="sm" c="red">
+              Choose at least one kind of character.
+            </Text>
+          )}
+          {generate.data?.warning && (
+            <Alert color="yellow" variant="light" p="xs">
+              {generate.data.warning}
+            </Alert>
+          )}
+        </Stack>
 
-        <div className="space-y-2">
-          <label className="flex items-center gap-3">
-            <span className="w-16 text-slate-600">Length</span>
-            <input
-              type="range"
+        <Stack gap="xs">
+          <Group gap="md" wrap="nowrap" align="center">
+            <Text size="sm" w={56}>
+              Length
+            </Text>
+            <Slider
+              style={{ flex: 1 }}
               min={12}
               max={128}
               value={settings.length}
-              onChange={(e) => change({ length: clampLength(Number(e.target.value)) })}
-              className="flex-1"
+              onChange={(length) => change({ length: clampLength(length) })}
+              label={null}
+              aria-label="Password length"
             />
-            <input
-              type="number"
+            <NumberInput
+              w={84}
               min={12}
               max={128}
+              allowDecimal={false}
               value={settings.length}
-              onChange={(e) => change({ length: clampLength(Number(e.target.value)) })}
-              className="w-16 rounded border border-slate-300 px-2 py-1"
+              // NumberInput reports a number, or a string while the text is not a number yet (e.g. empty).
+              onChange={(length) => typeof length === 'number' && change({ length: clampLength(length) })}
+              aria-label="Password length"
             />
-          </label>
+          </Group>
 
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-            <Check label="Upper case (A-Z)" checked={settings.upper} onChange={(upper) => change({ upper })} />
-            <Check label="Lower case (a-z)" checked={settings.lower} onChange={(lower) => change({ lower })} />
-            <Check label="Digits (0-9)" checked={settings.digits} onChange={(digits) => change({ digits })} />
-            <Check label="Symbols (!#$%…)" checked={settings.symbols} onChange={(symbols) => change({ symbols })} />
-          </div>
-          <Check
+          <SimpleGrid cols={2} spacing="xs" verticalSpacing={6}>
+            <Checkbox label="Upper case (A-Z)" checked={settings.upper} onChange={(e) => change({ upper: e.currentTarget.checked })} />
+            <Checkbox label="Lower case (a-z)" checked={settings.lower} onChange={(e) => change({ lower: e.currentTarget.checked })} />
+            <Checkbox label="Digits (0-9)" checked={settings.digits} onChange={(e) => change({ digits: e.currentTarget.checked })} />
+            <Checkbox label="Symbols (!#$%…)" checked={settings.symbols} onChange={(e) => change({ symbols: e.currentTarget.checked })} />
+          </SimpleGrid>
+          <Checkbox
             label="Exclude look-alikes (0 O 1 l I)"
             checked={settings.excludeLookalikes}
-            onChange={(excludeLookalikes) => change({ excludeLookalikes })}
+            onChange={(e) => change({ excludeLookalikes: e.currentTarget.checked })}
           />
-        </div>
+        </Stack>
 
-        <div className="space-y-2 border-t border-slate-200 pt-3">
-          <Check label="Save these options as the default for the whole app" checked={saveAsDefault} onChange={setSaveAsDefault} />
-          <button
+        <Divider />
+
+        <Stack gap={6}>
+          <Checkbox
+            label="Save these options as the default for the whole app"
+            checked={saveAsDefault}
+            onChange={(e) => setSaveAsDefault(e.currentTarget.checked)}
+          />
+          <Anchor
+            component="button"
             type="button"
+            size="xs"
+            c="dimmed"
+            style={{ alignSelf: 'flex-start' }}
             onClick={() => {
               setSettings(FACTORY_PASSWORD_SETTINGS)
               setSaveAsDefault(false)
             }}
-            className="text-xs text-slate-500 underline hover:text-slate-700"
           >
             Reset to factory options
-          </button>
-        </div>
+          </Anchor>
+        </Stack>
 
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={() => dialog.current?.close()} className="rounded border border-slate-300 px-4 py-2 hover:bg-slate-50">
+        <Group justify="flex-end" gap="xs">
+          <Button variant="default" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            type="button"
-            onClick={use}
-            disabled={!password || generate.isPending || classCount === 0}
-            className="rounded bg-slate-800 px-4 py-2 font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-          >
+          </Button>
+          <Button onClick={use} disabled={!password || generate.isPending || classCount === 0}>
             Use this password
-          </button>
-        </div>
-      </div>
-    </dialog>,
-    document.body,
-  )
-}
-
-function Check({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
-  return (
-    <label className="flex items-center gap-2">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span>{label}</span>
-    </label>
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
   )
 }

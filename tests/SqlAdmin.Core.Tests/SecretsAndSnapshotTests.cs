@@ -140,30 +140,82 @@ public class GeneratedSecretsAndRedactionTests
         ],
     };
 
+    /// <summary>What the script receives per login: {"p": password, "g": generated?}.</summary>
+    private sealed record Sent(
+        [property: System.Text.Json.Serialization.JsonPropertyName("p")] string Password,
+        [property: System.Text.Json.Serialization.JsonPropertyName("g")] bool Generated);
+
+    private static Dictionary<string, Sent> SentPasswords(IReadOnlyDictionary<string, string?> values) =>
+        JsonSerializer.Deserialize<Dictionary<string, Sent>>(values["passwords"]!)!;
+
     [Fact]
-    public void Each_item_of_the_list_gets_its_own_password_as_a_json_object()
+    public void Each_item_of_the_list_gets_its_own_generated_password_when_none_is_typed()
     {
         var (values, generated) = OperationExecutor.ApplyGeneratedSecrets(
             BulkOp(), new Dictionary<string, string?> { ["logins"] = """["alice","bob"]""" });
 
-        var perLogin = JsonSerializer.Deserialize<Dictionary<string, string>>(values["passwords"]!)!;
+        var perLogin = SentPasswords(values);
         Assert.Equal(["alice", "bob"], perLogin.Keys.Order());
-        Assert.All(perLogin.Values, p => Assert.True(p.Length >= 12));
-        Assert.NotEqual(perLogin["alice"], perLogin["bob"]);
+        Assert.All(perLogin.Values, s => Assert.True(s.Generated && s.Password.Length >= 12));
+        Assert.NotEqual(perLogin["alice"].Password, perLogin["bob"].Password);
 
         // Not in the "generated" dictionary: the script reports each password next to the login it was set for.
         Assert.Empty(generated);
     }
 
     [Fact]
-    public void A_value_sent_by_the_caller_for_a_per_item_password_is_ignored()
+    public void A_typed_password_is_kept_and_a_blank_one_is_generated()
     {
         var (values, _) = OperationExecutor.ApplyGeneratedSecrets(BulkOp(), new Dictionary<string, string?>
         {
-            ["logins"] = """["alice"]""", ["passwords"] = """{"alice":"chosen-by-caller"}""",
+            ["logins"] = """["alice","bob","carol"]""",
+            ["passwords"] = """{"alice":"Chosen#By-DBA1","bob":""}""",
         });
 
-        Assert.DoesNotContain("chosen-by-caller", values["passwords"]);
+        var perLogin = SentPasswords(values);
+        Assert.Equal(new Sent("Chosen#By-DBA1", Generated: false), perLogin["alice"]);
+        Assert.True(perLogin["bob"].Generated);   // blank = generate
+        Assert.True(perLogin["carol"].Generated); // not mentioned = generate
+    }
+
+    [Fact]
+    public void A_password_typed_for_a_login_that_is_no_longer_in_the_list_is_dropped()
+    {
+        var (values, _) = OperationExecutor.ApplyGeneratedSecrets(BulkOp(), new Dictionary<string, string?>
+        {
+            ["logins"] = """["alice"]""", ["passwords"] = """{"alice":"Chosen#By-DBA1","ghost":"Other#Pass1"}""",
+        });
+
+        Assert.Equal(["alice"], SentPasswords(values).Keys);
+        Assert.DoesNotContain("Other#Pass1", values["passwords"]);
+    }
+
+    [Theory]
+    [InlineData("""["not","an","object"]""")]
+    [InlineData("not json at all")]
+    public void A_per_item_password_value_that_is_not_a_json_object_is_rejected_without_echoing_it(string raw)
+    {
+        var values = new Dictionary<string, string?> { ["logins"] = """["alice"]""", ["passwords"] = raw };
+
+        var ex = Assert.Throws<TemplateRenderException>(() => OperationExecutor.ValidatePerItemSecrets(BulkOp(), values));
+
+        Assert.Contains("passwords", ex.Message);
+        Assert.DoesNotContain(raw, ex.Message);
+    }
+
+    [Fact]
+    public void A_typed_password_longer_than_sql_server_allows_is_rejected_naming_the_login_only()
+    {
+        var tooLong = new string('x', 129);
+        var values = new Dictionary<string, string?>
+        {
+            ["logins"] = """["alice"]""", ["passwords"] = JsonSerializer.Serialize(new Dictionary<string, string> { ["alice"] = tooLong }),
+        };
+
+        var ex = Assert.Throws<TemplateRenderException>(() => OperationExecutor.ValidatePerItemSecrets(BulkOp(), values));
+
+        Assert.Contains("'alice'", ex.Message);
+        Assert.DoesNotContain(tooLong, ex.Message);
     }
 
     [Fact]
@@ -171,7 +223,7 @@ public class GeneratedSecretsAndRedactionTests
     {
         var (values, _) = OperationExecutor.ApplyGeneratedSecrets(
             BulkOp(), new Dictionary<string, string?> { ["logins"] = """["alice"]""" });
-        var secret = JsonSerializer.Deserialize<Dictionary<string, string>>(values["passwords"]!)!["alice"];
+        var secret = SentPasswords(values)["alice"].Password;
 
         var json = OperationExecutor.RedactedParametersJson(BulkOp(), values);
 

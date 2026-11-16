@@ -1,4 +1,6 @@
 using System.Data.Common;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using SqlAdmin.Core.Engines;
 using SqlAdmin.Core.Execution;
 
@@ -43,18 +45,89 @@ public static class OperationExecutor
             generated[p.Name] = password;
         }
 
-        // generate_for_each: one password per item of a list parameter, as a JSON object {"item": "password"}.
+        // generate_for_each: one password per item of a list parameter.
+        //   IN  (from the form):  {"alice": "typed by the DBA"}      — only the items with a typed password
+        //   OUT (to the script):  {"alice": {"p": "typed…", "g": false}, "bob": {"p": "generated…", "g": true}}
+        // An item without a typed password gets a generated one. "g" tells the script which passwords were
+        // generated: only those are shown in the result grid (a typed one is already known to the DBA).
         // These are NOT added to `generated`: the caller shows that dictionary only when the whole run
         // succeeded, but a list run can succeed for some items and fail for others. The script therefore
-        // returns each password in its result grid, next to the item it was really set for.
-        // Whatever the caller sent for such a parameter is ignored: the value is always generated here.
-        foreach (var p in operation.Params.Where(p => p.GenerateForEach is not null && p.Type == OperationParameterType.Password))
+        // reports each generated password next to the item it was really set for.
+        foreach (var p in PerItemSecretParams(operation))
         {
             var items = MultiValues.Parse(completed.GetValueOrDefault(p.GenerateForEach!));
-            var perItem = items.ToDictionary(item => item, _ => SecretGenerator.GeneratePassword(), StringComparer.Ordinal);
-            completed[p.Name] = System.Text.Json.JsonSerializer.Serialize(perItem);
+            var typed = ParseTypedSecrets(p, completed.GetValueOrDefault(p.Name), items);
+            var perItem = new Dictionary<string, PerItemSecret>(StringComparer.Ordinal);
+            foreach (var item in items)
+            {
+                perItem[item] = typed.TryGetValue(item, out var own)
+                    ? new PerItemSecret(own, Generated: false)
+                    : new PerItemSecret(SecretGenerator.GeneratePassword(), Generated: true);
+            }
+            completed[p.Name] = JsonSerializer.Serialize(perItem);
         }
         return (completed, generated);
+    }
+
+    /// <summary>
+    /// Checks the passwords the DBA typed for a <c>generate_for_each</c> parameter WITHOUT generating anything:
+    /// preview calls it so a bad value is reported before the confirm step, not when the run starts.
+    /// Throws <see cref="TemplateRenderException"/> (HTTP 400). Messages name the item, never the password.
+    /// </summary>
+    public static void ValidatePerItemSecrets(OperationDefinition operation, IReadOnlyDictionary<string, string?> values)
+    {
+        foreach (var p in PerItemSecretParams(operation))
+        {
+            var items = MultiValues.Parse(values.GetValueOrDefault(p.GenerateForEach!));
+            ParseTypedSecrets(p, values.GetValueOrDefault(p.Name), items);
+        }
+    }
+
+    private static IEnumerable<OperationParameter> PerItemSecretParams(OperationDefinition operation) =>
+        operation.Params.Where(p => p.GenerateForEach is not null && p.Type == OperationParameterType.Password);
+
+    /// <summary>What the script receives per item. Short JSON names keep the bound value small.</summary>
+    private sealed record PerItemSecret(
+        [property: JsonPropertyName("p")] string Password,
+        [property: JsonPropertyName("g")] bool Generated);
+
+    /// <summary>SQL Server's own limit for a login password.</summary>
+    private const int MaxPasswordLength = 128;
+
+    /// <summary>
+    /// The typed passwords of a <c>generate_for_each</c> parameter, for the items that are really in the list.
+    /// Blank entries mean "generate it"; entries for names that are not in the list are dropped (the DBA
+    /// unticked that login after typing a password for it).
+    /// </summary>
+    private static Dictionary<string, string> ParseTypedSecrets(
+        OperationParameter param, string? raw, IReadOnlyList<string> items)
+    {
+        var typed = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(raw)) return typed;
+
+        Dictionary<string, string?>? sent;
+        try
+        {
+            sent = JsonSerializer.Deserialize<Dictionary<string, string?>>(raw);
+        }
+        catch (JsonException)
+        {
+            // Never echo `raw` here: it contains passwords.
+            throw new TemplateRenderException($"'{param.Name}' must be a JSON object of item → password.");
+        }
+
+        if (sent is null) return typed; // the JSON text "null"
+
+        var listed = items.ToHashSet(StringComparer.Ordinal);
+        foreach (var (key, value) in sent)
+        {
+            var item = key.Trim();
+            if (string.IsNullOrEmpty(value) || !listed.Contains(item)) continue;
+            if (value.Length > MaxPasswordLength)
+                throw new TemplateRenderException($"The password for '{item}' is longer than {MaxPasswordLength} characters.");
+            typed[item] = value;
+        }
+        return typed;
     }
 
     /// <summary>

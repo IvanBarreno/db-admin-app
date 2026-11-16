@@ -1,9 +1,10 @@
 // TypedList.test.tsx — the "paste a list of names" box: what it reports to the form and when it blocks it.
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, screen } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { OperationParameter } from '../api/operations'
+import { renderWithMantine } from '../test/render'
 import { TypedList } from './TypedList'
 
 const param = { name: 'login_names', type: 'String', required: true, multi: true, label: 'Login names' } as unknown as OperationParameter
@@ -42,7 +43,7 @@ afterEach(() => {
 
 describe('TypedList', () => {
   it('reports the typed names as a JSON list, trimmed and without duplicates', () => {
-    render(<Harness />)
+    renderWithMantine(<Harness />)
 
     fireEvent.change(box(), { target: { value: 'app_a\n app_b \napp_a' } })
 
@@ -52,13 +53,13 @@ describe('TypedList', () => {
   })
 
   it('shows a value that is already in the form, one name per line', () => {
-    render(<Harness initial='["x","y"]' />)
+    renderWithMantine(<Harness initial='["x","y"]' />)
 
     expect(box().value).toBe('x\ny')
   })
 
   it('blocks the form while a required list is empty and unblocks once a name is typed', () => {
-    render(<Harness />)
+    renderWithMantine(<Harness />)
     expect(onBlock).toHaveBeenLastCalledWith('login_names', expect.stringContaining('at least one name'))
 
     fireEvent.change(box(), { target: { value: 'app_a' } })
@@ -67,7 +68,7 @@ describe('TypedList', () => {
   })
 
   it('empties the box when the form is cleared from outside', () => {
-    render(<Harness />)
+    renderWithMantine(<Harness />)
     fireEvent.change(box(), { target: { value: 'app_a\napp_b' } })
 
     fireEvent.click(screen.getByText('clear form'))
@@ -76,7 +77,7 @@ describe('TypedList', () => {
   })
 
   it('reports an empty value (not "[]") when everything is deleted', () => {
-    render(<Harness initial='["x"]' />)
+    renderWithMantine(<Harness initial='["x"]' />)
 
     fireEvent.change(box(), { target: { value: '  \n' } })
 

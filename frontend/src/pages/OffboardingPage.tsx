@@ -1,3 +1,6 @@
+import { Accordion, Alert, Badge, Button, Checkbox, Code, Group, List, Modal, Paper, Select, Skeleton, Stack, Table, Text, TextInput } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
+import { IconAlertTriangle, IconPlayerPlay, IconSearch } from '@tabler/icons-react'
 import { useState } from 'react'
 import { EnvBadge } from '../components/EnvBadge'
 import { ParamForm } from '../components/ParamForm'
@@ -8,6 +11,7 @@ import { targetLabel } from '../components/target'
 import { ResultsGrid } from '../components/ResultsGrid'
 import { StatementList } from '../components/StatementList'
 import { StepLog } from '../components/StepLog'
+import { PageHeader } from '../shell/PageHeader'
 import type { LookupResult } from '../api/lookups'
 import { useServers } from '../api/servers'
 import {
@@ -34,6 +38,7 @@ export default function OffboardingPage() {
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
   // null = "untouched": show the workflow's default selection.
   const [picked, setPicked] = useState<Set<string> | null>(null)
+  const [confirming, setConfirming] = useState(false)
   const [typedServerName, setTypedServerName] = useState('')
   // Why a required field cannot be filled in right now: keeps Preview / Run off and says why.
   const [cannotFill, setCannotFill] = useState<string[]>([])
@@ -70,6 +75,7 @@ export default function OffboardingPage() {
   function resetPreview() {
     preview.reset()
     execute.reset()
+    setConfirming(false)
     setTypedServerName('')
   }
 
@@ -81,173 +87,238 @@ export default function OffboardingPage() {
     resetPreview()
   }
 
+  function sendExecute(current: NonNullable<typeof preview.data>) {
+    setConfirming(false)
+    execute.mutate(
+      {
+        ...buildRequest(),
+        confirmToken: current.confirmToken,
+        confirmServerName: current.requiresServerName ? typedServerName : null,
+      },
+      {
+        onSuccess: (result) =>
+          notifications.show(
+            result.success
+              ? { color: 'green', title: 'Checklist finished', message: `Offboarding of [${leaver}] · ${result.elapsedMs} ms` }
+              : { color: 'red', title: 'Checklist stopped', message: 'A step failed; later steps did not run. Details below.' },
+          ),
+        onError: (error) => notifications.show({ color: 'red', title: 'Run refused', message: error.message }),
+      },
+    )
+  }
+
   async function runExecute() {
     if (!serverName || !workflow) return
     // Always preview first: it says whether the plan is destructive and hands back the token.
     const current = preview.data ?? (await preview.mutateAsync(buildRequest()).catch(() => null))
     if (!current) return // preview failed; its error is shown below
     if (current.checks.some((c) => c.result.blocking)) return // blocked by a preflight check; shown below
-    if (current.destructive && !(preview.data && confirmReady)) return // show the confirm panel first
-    execute.mutate({
-      ...buildRequest(),
-      confirmToken: current.confirmToken,
-      confirmServerName: current.requiresServerName ? typedServerName : null,
-    })
+    // The whole checklist is confirmed ONCE, in a dialog that lists every statement.
+    if (current.destructive) {
+      setConfirming(true)
+      return
+    }
+    sendExecute(current)
   }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Offboarding</h2>
+    <Stack gap="md">
+      <PageHeader title="Offboarding" description={workflow?.description ?? 'A guided checklist to remove a leaver’s access.'} />
 
       <TargetBar server={server} where="server level + every online database" summary={summary} />
 
-      {(servers.isPending || workflows.isPending) && <p className="text-slate-500">Loading…</p>}
-      {servers.isError && <p className="text-red-700">Could not load servers: {servers.error.message}</p>}
-      {workflows.isError && <p className="text-red-700">Could not load the checklist: {workflows.error.message}</p>}
+      {(servers.isPending || workflows.isPending) && <Skeleton height={36} maw={320} />}
+      {servers.isError && (
+        <Alert color="red" variant="light">
+          Could not load servers: {servers.error.message}
+        </Alert>
+      )}
+      {workflows.isError && (
+        <Alert color="red" variant="light">
+          Could not load the checklist: {workflows.error.message}
+        </Alert>
+      )}
 
       {servers.data && workflow && (
         <>
-          <p className="max-w-3xl text-sm text-slate-600">{workflow.description}</p>
-
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="text-sm">
-              <span className="mb-1 block text-slate-600">Server</span>
-              <select
-                value={serverName ?? ''}
-                onChange={(e) => {
-                  setServerName(e.target.value || null)
-                  setParamValues({})
-                  resetPreview()
-                }}
-                className="rounded border border-slate-300 px-2 py-1.5"
-              >
-                <option value="">Select a server…</option>
-                {servers.data.map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {server && <EnvBadge environment={server.environment} />}
-          </div>
+          <Group align="flex-end" gap="sm">
+            <Select
+              label="Server"
+              placeholder="Select a server…"
+              w={260}
+              data={servers.data.map((s) => s.name)}
+              value={serverName}
+              onChange={(next) => {
+                setServerName(next)
+                setParamValues({})
+                resetPreview()
+              }}
+            />
+            {server && (
+              <div style={{ paddingBottom: 6 }}>
+                <EnvBadge environment={server.environment} />
+              </div>
+            )}
+          </Group>
 
           {serverName && (
-            <div className="space-y-4 rounded border border-slate-200 p-4">
-              <ParamForm
-                params={workflow.params}
-                values={paramValues}
-                onChange={(values) => {
-                  setParamValues(values)
-                  resetPreview()
-                }}
-                serverName={serverName}
-                database=""
-                onBlockedChange={setCannotFill}
-              />
+            <Paper withBorder p="md">
+              <Stack gap="md">
+                <ParamForm
+                  params={workflow.params}
+                  values={paramValues}
+                  onChange={(values) => {
+                    setParamValues(values)
+                    resetPreview()
+                  }}
+                  serverName={serverName}
+                  database=""
+                  onBlockedChange={setCannotFill}
+                />
 
-              <Checklist workflow={workflow} selected={selected} onToggle={toggle} result={execute.data?.steps} />
+                <Checklist workflow={workflow} selected={selected} onToggle={toggle} result={execute.data?.steps} />
 
-              {workflow.notes.length > 0 && (
-                <ul className="list-disc space-y-1 pl-5 text-xs text-slate-500">
-                  {workflow.notes.map((n) => (
-                    <li key={n}>{n}</li>
-                  ))}
-                </ul>
-              )}
+                {workflow.notes.length > 0 && (
+                  <List size="xs" c="dimmed" spacing={2}>
+                    {workflow.notes.map((n) => (
+                      <List.Item key={n}>{n}</List.Item>
+                    ))}
+                  </List>
+                )}
 
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => preview.mutate(buildRequest())}
-                  disabled={preview.isPending || cannotFill.length > 0}
-                  className="rounded border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                >
-                  {preview.isPending ? 'Rendering…' : 'Preview all steps'}
-                </button>
-                <button
-                  type="button"
-                  onClick={runExecute}
-                  disabled={execute.isPending || preview.isPending || !confirmReady || blocked || cannotFill.length > 0}
-                  className={`rounded px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
-                    pendingConfirm ? 'bg-red-700 hover:bg-red-600' : 'bg-slate-800 hover:bg-slate-700'
-                  }`}
-                >
-                  {execute.isPending
-                    ? 'Running…'
-                    : targetLabel(pendingConfirm ? 'Confirm and run the checklist' : 'Run the checklist', server, leaver ? `[${leaver}]` : null)}
-                </button>
-                {execute.isError && <span className="text-sm text-red-700">{execute.error.message}</span>}
-                {execute.data && <span className="text-sm text-slate-500">{execute.data.elapsedMs} ms</span>}
-              </div>
-
-              {cannotFill.length > 0 && <p className="text-sm text-amber-700">Cannot run yet: {cannotFill[0]}</p>}
-              {preview.isError && <p className="text-sm text-red-700">{preview.error.message}</p>}
-
-              <PreflightPanel checks={checks} />
-              {preview.data?.impact && <ImpactReport impact={preview.data.impact} />}
-
-              {preview.data && (
-                <div className="space-y-2">
-                  {preview.data.steps.map((s, i) => (
-                    <details key={s.key} className="rounded border border-slate-200 text-sm">
-                      <summary className="cursor-pointer px-3 py-2 font-medium text-slate-700">
-                        {i + 1}. {s.title}
-                        {s.destructive && <span className="ml-2 text-xs text-red-700">⚠ destructive</span>}
-                      </summary>
-                      <div className="space-y-2 border-t border-slate-100 p-3">
-                        {/* Dry run: the exact statements. Steps without dry-run (the snapshot) show their query. */}
-                        {s.statements ? (
-                          <StatementList statements={s.statements} />
-                        ) : (
-                          <pre className="whitespace-pre-wrap bg-slate-50 p-3 text-xs text-slate-700">
-                            {s.batches.join('\nGO\n')}
-                          </pre>
-                        )}
-                      </div>
-                    </details>
-                  ))}
-                </div>
-              )}
-
-              {pendingConfirm && !blocked && (
-                <div className="space-y-2 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900">
-                  <p className="font-medium">
-                    ⚠ This runs {pendingConfirm.steps.length} steps and changes the server. Review the statements above, then confirm.
-                  </p>
-                  {server && (
-                    <ConfirmRecap
-                      rows={[
-                        ['Server', `${server.name} (${server.environment})`],
-                        ['Login', leaver ? `[${leaver}]` : null],
-                        ['New owner', newOwner ? `[${newOwner}]` : null],
-                        ['Steps', pendingConfirm.steps.map((s) => s.title).join(' → ')],
-                        ['Statements', `${pendingConfirm.steps.reduce((n, s) => n + (s.statements?.length ?? 0), 0)} in total`],
-                        ['Will touch', touchedSummary(preview.data?.impact)],
-                      ]}
-                    />
+                <Group gap="sm" align="center">
+                  <Button
+                    variant="default"
+                    leftSection={<IconSearch size={16} />}
+                    onClick={() => preview.mutate(buildRequest())}
+                    loading={preview.isPending}
+                    disabled={cannotFill.length > 0}
+                  >
+                    Preview all steps
+                  </Button>
+                  <Button
+                    color={pendingConfirm ? 'red' : undefined}
+                    leftSection={<IconPlayerPlay size={16} />}
+                    onClick={runExecute}
+                    loading={execute.isPending}
+                    disabled={preview.isPending || blocked || cannotFill.length > 0}
+                  >
+                    {targetLabel(pendingConfirm ? 'Review and run the checklist' : 'Run the checklist', server, leaver ? `[${leaver}]` : null)}
+                  </Button>
+                  {execute.data && (
+                    <Text size="sm" c="dimmed">
+                      {execute.data.elapsedMs} ms
+                    </Text>
                   )}
-                  {pendingConfirm.requiresServerName && (
-                    <label className="block">
-                      <span className="mb-1 block">
-                        Production server: type <strong>{serverName}</strong> to enable the button.
-                      </span>
-                      <input
-                        value={typedServerName}
-                        onChange={(e) => setTypedServerName(e.target.value)}
-                        className="rounded border border-red-300 bg-white px-2 py-1.5"
-                      />
-                    </label>
-                  )}
-                </div>
-              )}
+                </Group>
 
-              {execute.data && <Results steps={execute.data.steps} warnings={execute.data.warnings} success={execute.data.success} />}
-            </div>
+                {cannotFill.length > 0 && (
+                  <Text size="sm" c="orange">
+                    Cannot run yet: {cannotFill[0]}
+                  </Text>
+                )}
+                {execute.isError && (
+                  <Alert color="red" variant="light" icon={<IconAlertTriangle size={18} />}>
+                    {execute.error.message}
+                  </Alert>
+                )}
+                {preview.isError && (
+                  <Alert color="red" variant="light" icon={<IconAlertTriangle size={18} />}>
+                    {preview.error.message}
+                  </Alert>
+                )}
+
+                <PreflightPanel checks={checks} />
+                {preview.data?.impact && <ImpactReport impact={preview.data.impact} />}
+
+                {preview.data && (
+                  <Accordion variant="contained" multiple>
+                    {preview.data.steps.map((s, i) => (
+                      <Accordion.Item key={s.key} value={s.key}>
+                        <Accordion.Control>
+                          <Group gap="xs">
+                            <Text size="sm" fw={500}>
+                              {i + 1}. {s.title}
+                            </Text>
+                            {s.destructive && (
+                              <Badge size="xs" color="red" variant="light">
+                                destructive
+                              </Badge>
+                            )}
+                          </Group>
+                        </Accordion.Control>
+                        <Accordion.Panel>
+                          {/* Dry run: the exact statements. Steps without dry-run (the snapshot) show their query. */}
+                          {s.statements ? (
+                            <StatementList statements={s.statements} />
+                          ) : (
+                            <Code block style={{ whiteSpace: 'pre-wrap' }}>
+                              {s.batches.join('\nGO\n')}
+                            </Code>
+                          )}
+                        </Accordion.Panel>
+                      </Accordion.Item>
+                    ))}
+                  </Accordion>
+                )}
+
+                {execute.data && <Results steps={execute.data.steps} warnings={execute.data.warnings} success={execute.data.success} />}
+              </Stack>
+            </Paper>
           )}
         </>
       )}
-    </div>
+
+      {/* One confirmation for the whole checklist. */}
+      <Modal
+        opened={confirming && pendingConfirm !== null && !blocked}
+        onClose={() => setConfirming(false)}
+        title={
+          <Text fw={700} c="red">
+            ⚠ This runs {pendingConfirm?.steps.length ?? 0} steps and changes the server
+          </Text>
+        }
+        size="lg"
+        centered
+      >
+        <Stack gap="md">
+          <Text size="sm">Review the steps and the recap, then confirm. A failed step stops the rest.</Text>
+          {pendingConfirm && server && (
+            <ConfirmRecap
+              rows={[
+                ['Server', `${server.name} (${server.environment})`],
+                ['Login', leaver ? `[${leaver}]` : null],
+                ['New owner', newOwner ? `[${newOwner}]` : null],
+                ['Steps', pendingConfirm.steps.map((s) => s.title).join(' → ')],
+                ['Statements', `${pendingConfirm.steps.reduce((n, s) => n + (s.statements?.length ?? 0), 0)} in total`],
+                ['Will touch', touchedSummary(preview.data?.impact)],
+              ]}
+            />
+          )}
+          {pendingConfirm?.requiresServerName && (
+            <TextInput
+              label={
+                <>
+                  Production server: type <strong>{serverName}</strong> to enable the button.
+                </>
+              }
+              value={typedServerName}
+              onChange={(e) => setTypedServerName(e.currentTarget.value)}
+              autoComplete="off"
+              data-autofocus
+            />
+          )}
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+            <Button color="red" disabled={!confirmReady} onClick={() => pendingConfirm && sendExecute(pendingConfirm)}>
+              {targetLabel('Confirm and run the checklist', server, leaver ? `[${leaver}]` : null)}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </Stack>
   )
 }
 
@@ -264,28 +335,34 @@ function touchedSummary(impact: LookupResult | null | undefined): string | null 
 /** Dry-run report: how many sessions / jobs / databases / roles the run will touch, from the server. */
 function ImpactReport({ impact }: { impact: LookupResult }) {
   if (impact.warning) {
-    return <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">⚠ {impact.warning}</p>
+    return (
+      <Alert color="yellow" variant="light" icon={<IconAlertTriangle size={18} />}>
+        {impact.warning}
+      </Alert>
+    )
   }
 
   return (
-    <div className="rounded border border-slate-200 text-sm">
-      <p className="border-b border-slate-100 px-3 py-2 font-medium text-slate-700">What this run will touch</p>
-      <table className="w-full">
-        <tbody>
+    <Paper withBorder>
+      <Text size="sm" fw={600} px="sm" py={6} style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+        What this run will touch
+      </Text>
+      <Table fz="sm" verticalSpacing={4} withRowBorders>
+        <Table.Tbody>
           {impact.items.map((item) => {
             const count = Number((item.extra as Record<string, unknown>).count ?? 0)
             return (
-              <tr key={item.value} className="border-t border-slate-100 first:border-t-0">
-                <td className="px-3 py-1 text-slate-600">{item.label}</td>
-                <td className={`px-3 py-1 text-right tabular-nums ${count > 0 ? 'font-medium text-slate-900' : 'text-slate-400'}`}>
+              <Table.Tr key={item.value}>
+                <Table.Td c="dimmed">{item.label}</Table.Td>
+                <Table.Td ta="right" fw={count > 0 ? 600 : undefined} c={count > 0 ? undefined : 'dimmed'}>
                   {count}
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             )
           })}
-        </tbody>
-      </table>
-    </div>
+        </Table.Tbody>
+      </Table>
+    </Paper>
   )
 }
 
@@ -306,40 +383,54 @@ function Checklist({
   result: readonly WorkflowStepResult[] | undefined
 }) {
   return (
-    <ol className="space-y-1">
+    <Stack gap={6}>
       {workflow.steps.map((s, i) => {
         const outcome = result?.find((r) => r.key === s.key)
         return (
-          <li key={s.key} className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              id={`step-${s.key}`}
+          <Group key={s.key} gap="sm" wrap="nowrap">
+            <Checkbox
               checked={selected.has(s.key)}
               disabled={s.required}
               onChange={() => onToggle(s.key)}
+              label={
+                <Text span size="sm" c={selected.has(s.key) ? undefined : 'dimmed'}>
+                  {i + 1}. {s.title}
+                  {s.destructive && (
+                    <Text span size="xs" c="red">
+                      {' '}
+                      ⚠
+                    </Text>
+                  )}
+                  {s.needsNewOwner && (
+                    <Text span size="xs" c="dimmed">
+                      {' '}
+                      (needs an owner — see "New owner" above)
+                    </Text>
+                  )}
+                  {s.required && (
+                    <Text span size="xs" c="dimmed">
+                      {' '}
+                      (always)
+                    </Text>
+                  )}
+                </Text>
+              }
             />
-            <label htmlFor={`step-${s.key}`} className={selected.has(s.key) ? '' : 'text-slate-400'}>
-              {i + 1}. {s.title}
-              {s.destructive && <span className="ml-2 text-xs text-red-700">⚠</span>}
-              {s.needsNewOwner && <span className="ml-2 text-xs text-slate-500">(needs an owner — see "New owner" above)</span>}
-              {s.required && <span className="ml-2 text-xs text-slate-500">(always)</span>}
-            </label>
             {outcome && <StatusBadge status={outcome.status} />}
-          </li>
+          </Group>
         )
       })}
-    </ol>
+    </Stack>
   )
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const style =
-    status === 'OK'
-      ? 'bg-emerald-50 text-emerald-700 ring-emerald-300'
-      : status === 'FAILED'
-        ? 'bg-red-50 text-red-700 ring-red-300'
-        : 'bg-slate-100 text-slate-500 ring-slate-300'
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${style}`}>{status === 'NOT_RUN' ? 'not run' : status}</span>
+  const color = status === 'OK' ? 'green' : status === 'FAILED' ? 'red' : 'gray'
+  return (
+    <Badge size="sm" color={color} variant="light">
+      {status === 'NOT_RUN' ? 'not run' : status}
+    </Badge>
+  )
 }
 
 /** Per-step detail after a run: error, snapshot file, per-database log and result grids. */
@@ -352,39 +443,51 @@ function Results({
   warnings: readonly string[]
   success: boolean
 }) {
+  const ran = steps.filter((s) => s.status !== 'NOT_RUN')
   return (
-    <div className="space-y-3">
-      <p className={`text-sm font-medium ${success ? 'text-emerald-700' : 'text-red-700'}`}>
+    <Stack gap="sm">
+      <Alert color={success ? 'green' : 'red'} variant="light">
         {success ? 'All steps finished.' : 'Stopped at the first failed step; later steps did not run.'}
-      </p>
+      </Alert>
 
       {warnings.map((w) => (
-        <p key={w} className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          ⚠ {w}
-        </p>
+        <Alert key={w} color="yellow" variant="light" icon={<IconAlertTriangle size={18} />}>
+          {w}
+        </Alert>
       ))}
 
-      {steps
-        .filter((s) => s.status !== 'NOT_RUN')
-        .map((s) => (
-          <details key={s.key} open={s.status === 'FAILED'} className="rounded border border-slate-200 text-sm">
-            <summary className="cursor-pointer px-3 py-2 font-medium text-slate-700">
-              {s.title} <StatusBadge status={s.status} /> <span className="font-normal text-slate-400">{s.elapsedMs} ms</span>
-            </summary>
-            <div className="space-y-3 border-t border-slate-100 p-3">
-              {s.snapshotPath && (
-                <p className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-emerald-900">
-                  Snapshot saved: <code className="break-all">{s.snapshotPath}</code>
-                </p>
-              )}
-              {s.steps && <StepLog steps={[...s.steps]} />}
-              <ResultsGrid
-                result={{ success: s.status === 'OK', resultSets: s.resultSets, messages: s.messages, error: s.error }}
-                exportName={`offboarding ${s.key}`}
-              />
-            </div>
-          </details>
+      {/* A failed step starts open, so the error is never hidden. */}
+      <Accordion variant="contained" multiple defaultValue={ran.filter((s) => s.status === 'FAILED').map((s) => s.key)}>
+        {ran.map((s) => (
+          <Accordion.Item key={s.key} value={s.key}>
+            <Accordion.Control>
+              <Group gap="xs">
+                <Text size="sm" fw={500}>
+                  {s.title}
+                </Text>
+                <StatusBadge status={s.status} />
+                <Text size="xs" c="dimmed">
+                  {s.elapsedMs} ms
+                </Text>
+              </Group>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <Stack gap="sm">
+                {s.snapshotPath && (
+                  <Alert color="green" variant="light">
+                    Snapshot saved: <Code>{s.snapshotPath}</Code>
+                  </Alert>
+                )}
+                {s.steps && <StepLog steps={[...s.steps]} />}
+                <ResultsGrid
+                  result={{ success: s.status === 'OK', resultSets: s.resultSets, messages: s.messages, error: s.error }}
+                  exportName={`offboarding ${s.key}`}
+                />
+              </Stack>
+            </Accordion.Panel>
+          </Accordion.Item>
         ))}
-    </div>
+      </Accordion>
+    </Stack>
   )
 }

@@ -17,4 +17,10 @@ public interface IAuditStore
 
     /// <summary>Steps of one entry, in execution order. Empty when the entry has none.</summary>
     Task<IReadOnlyList<AuditStep>> GetStepsAsync(long auditEntryId, CancellationToken ct);
+
+    /// <summary>
+    /// How many steps each of these entries has (entry id → count). Entries without steps are simply absent.
+    /// The list page uses it to know, without loading the steps themselves, which rows have any to show.
+    /// </summary>
+    Task<IReadOnlyDictionary<long, int>> GetStepCountsAsync(IReadOnlyCollection<long> auditEntryIds, CancellationToken ct);
 }

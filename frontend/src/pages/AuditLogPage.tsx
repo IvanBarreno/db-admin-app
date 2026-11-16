@@ -1,50 +1,76 @@
+import { Alert, Badge, Button, Code, Drawer, Group, Paper, Select, Skeleton, Stack, Table, Text, TextInput, Tooltip } from '@mantine/core'
 import { useState } from 'react'
 import { useAuditLog, useAuditSteps, type AuditEntry } from '../api/audit'
 import { useServers } from '../api/servers'
 import { StepLog } from '../components/StepLog'
+import { PageHeader } from '../shell/PageHeader'
 
-/** One log row; the "Steps" button lazily loads the per-database log of that run. */
-function AuditRow({ entry }: { entry: AuditEntry }) {
-  const [open, setOpen] = useState(false)
-  const steps = useAuditSteps(entry.id, open)
+/**
+ * Does the drawer have anything the row does not already show? Steps, an error message or parameters.
+ * (The SQL alone does not count: the row shows it, and its full text is in the cell's tooltip.)
+ */
+function hasDetails(entry: AuditEntry): boolean {
+  return entry.stepCount > 0 || Boolean(entry.detail) || Boolean(entry.parametersJson)
+}
+
+/** Details of one run, opened from its row: the full SQL, the parameters, and the per-database steps (loaded now, not before). */
+function EntryDetails({ entry }: { entry: AuditEntry }) {
+  // The list already says how many steps the run has: only ask for them when there are any.
+  const hasSteps = entry.stepCount > 0
+  const steps = useAuditSteps(entry.id, hasSteps)
 
   return (
-    <>
-      <tr className="border-b border-slate-100 align-top">
-        <td className="py-2 pr-4 whitespace-nowrap text-slate-500">
-          {new Date(entry.executedAtUtc).toLocaleString()}
-        </td>
-        <td className="py-2 pr-4">{entry.executedBy}</td>
-        <td className="py-2 pr-4">{entry.serverName}</td>
-        <td className="py-2 pr-4">{entry.database ?? '—'}</td>
-        <td className="py-2 pr-4">
-          <span className={entry.status === 'Success' ? 'text-emerald-700' : 'text-red-700'}>{entry.status}</span>
-          {entry.detail && <div className="text-xs text-slate-500">{entry.detail}</div>}
-        </td>
-        <td className="max-w-md truncate py-2 pr-4 font-mono text-xs" title={entry.sql}>
-          {entry.sql}
-          {entry.parametersJson && (
-            <div className="truncate text-slate-500" title={entry.parametersJson}>
-              {entry.parametersJson}
-            </div>
-          )}
-        </td>
-        <td className="py-2">
-          <button type="button" onClick={() => setOpen(!open)} className="text-xs text-slate-600 underline">
-            {open ? 'Hide steps' : 'Steps'}
-          </button>
-        </td>
-      </tr>
-      {open && (
-        <tr className="border-b border-slate-100">
-          <td colSpan={7} className="pb-3">
-            {steps.isPending && <p className="text-xs text-slate-500">Loading…</p>}
-            {steps.data?.length === 0 && <p className="text-xs text-slate-500">No steps recorded for this entry.</p>}
-            {steps.data && <StepLog steps={steps.data} />}
-          </td>
-        </tr>
+    <Stack gap="md">
+      <Group gap="xs">
+        <Badge color={entry.status === 'Success' ? 'green' : 'red'} variant="light">
+          {entry.status}
+        </Badge>
+        <Text size="sm" c="dimmed">
+          {new Date(entry.executedAtUtc).toLocaleString()} · {entry.executedBy} · {entry.serverName}
+          {entry.database ? ` · ${entry.database}` : ''}
+        </Text>
+      </Group>
+
+      {entry.detail && (
+        <Alert color="red" variant="light">
+          {entry.detail}
+        </Alert>
       )}
-    </>
+
+      <div>
+        <Text size="sm" fw={600} mb={4}>
+          SQL
+        </Text>
+        <Code block style={{ whiteSpace: 'pre-wrap' }}>
+          {entry.sql}
+        </Code>
+      </div>
+
+      {entry.parametersJson && (
+        <div>
+          <Text size="sm" fw={600} mb={4}>
+            Parameters
+          </Text>
+          <Code block style={{ whiteSpace: 'pre-wrap' }}>
+            {entry.parametersJson}
+          </Code>
+          <Text size="xs" c="dimmed" mt={4}>
+            Passwords are recorded as ***.
+          </Text>
+        </div>
+      )}
+
+      {hasSteps && (
+        <div>
+          <Text size="sm" fw={600} mb={4}>
+            Steps
+          </Text>
+          {steps.isPending && <Skeleton height={40} />}
+          {steps.isError && <Text c="red">{steps.error.message}</Text>}
+          {steps.data && <StepLog steps={steps.data} />}
+        </div>
+      )}
+    </Stack>
   )
 }
 
@@ -54,6 +80,8 @@ export default function AuditLogPage() {
   const [executedBy, setExecutedBy] = useState('')
   const [serverName, setServerName] = useState('')
   const [status, setStatus] = useState('')
+  // The row whose details are open in the side drawer (null = closed).
+  const [selected, setSelected] = useState<AuditEntry | null>(null)
 
   const audit = useAuditLog({
     executedBy: executedBy || undefined,
@@ -62,80 +90,112 @@ export default function AuditLogPage() {
   })
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Audit log</h2>
+    <Stack gap="md">
+      <PageHeader title="Audit log" description="Every run on this machine, newest first. Open a row for the full SQL and its steps." />
 
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="text-sm">
-          <span className="mb-1 block text-slate-600">User</span>
-          <input
-            value={executedBy}
-            onChange={(e) => setExecutedBy(e.target.value)}
-            placeholder="any"
-            className="rounded border border-slate-300 px-2 py-1.5"
-          />
-        </label>
+      <Group align="flex-end" gap="sm">
+        <TextInput label="User" placeholder="any" w={200} value={executedBy} onChange={(e) => setExecutedBy(e.currentTarget.value)} />
+        <Select
+          label="Server"
+          placeholder="any"
+          w={220}
+          clearable
+          data={(servers.data ?? []).map((s) => s.name)}
+          value={serverName || null}
+          onChange={(next) => setServerName(next ?? '')}
+        />
+        <Select
+          label="Status"
+          placeholder="any"
+          w={160}
+          clearable
+          data={['Success', 'Failed']}
+          value={status || null}
+          onChange={(next) => setStatus(next ?? '')}
+        />
+      </Group>
 
-        <label className="text-sm">
-          <span className="mb-1 block text-slate-600">Server</span>
-          <select
-            value={serverName}
-            onChange={(e) => setServerName(e.target.value)}
-            className="rounded border border-slate-300 px-2 py-1.5"
-          >
-            <option value="">any</option>
-            {servers.data?.map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="text-sm">
-          <span className="mb-1 block text-slate-600">Status</span>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="rounded border border-slate-300 px-2 py-1.5"
-          >
-            <option value="">any</option>
-            <option value="Success">Success</option>
-            <option value="Failed">Failed</option>
-          </select>
-        </label>
-      </div>
-
-      {audit.isPending && <p className="text-slate-500">Loading…</p>}
-      {audit.isError && <p className="text-red-700">Could not load audit log: {audit.error.message}</p>}
+      {audit.isPending && <Skeleton height={160} />}
+      {audit.isError && (
+        <Alert color="red" variant="light">
+          Could not load audit log: {audit.error.message}
+        </Alert>
+      )}
 
       {audit.data && (
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 text-left text-slate-600">
-              <th className="py-2 pr-4">When</th>
-              <th className="py-2 pr-4">User</th>
-              <th className="py-2 pr-4">Server</th>
-              <th className="py-2 pr-4">Database</th>
-              <th className="py-2 pr-4">Status</th>
-              <th className="py-2 pr-4">SQL</th>
-              <th className="py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {audit.data.map((entry) => (
-              <AuditRow key={entry.id} entry={entry} />
-            ))}
-            {audit.data.length === 0 && (
-              <tr>
-                <td colSpan={7} className="py-4 text-center text-slate-500">
-                  No entries match these filters.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        <Paper withBorder>
+          <Table.ScrollContainer minWidth={760} type="native">
+            <Table highlightOnHover verticalSpacing={6} fz="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>When</Table.Th>
+                  <Table.Th>User</Table.Th>
+                  <Table.Th>Server</Table.Th>
+                  <Table.Th>Database</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th>SQL</Table.Th>
+                  <Table.Th />
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {audit.data.map((entry) => (
+                  <Table.Tr key={entry.id}>
+                    <Table.Td c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                      {new Date(entry.executedAtUtc).toLocaleString()}
+                    </Table.Td>
+                    <Table.Td>{entry.executedBy}</Table.Td>
+                    <Table.Td>{entry.serverName}</Table.Td>
+                    <Table.Td>{entry.database ?? '—'}</Table.Td>
+                    <Table.Td>
+                      <Badge color={entry.status === 'Success' ? 'green' : 'red'} variant="light">
+                        {entry.status}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td maw={420}>
+                      <Text size="xs" ff="monospace" truncate title={entry.sql}>
+                        {entry.sql}
+                      </Text>
+                      {entry.parametersJson && (
+                        <Text size="xs" c="dimmed" truncate title={entry.parametersJson}>
+                          {entry.parametersJson}
+                        </Text>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      {/* Disabled when the drawer would add nothing to the row: no steps, no error text,
+                          no parameters. The tooltip says so (a dead button with no reason looks broken). */}
+                      <Tooltip label="Nothing more to show: no steps, error text or parameters" disabled={hasDetails(entry)}>
+                        <Button
+                          size="compact-xs"
+                          variant="default"
+                          disabled={!hasDetails(entry)}
+                          onClick={() => setSelected(entry)}
+                          // A disabled button ignores the mouse, so the tooltip would never open: let it through.
+                          style={hasDetails(entry) ? undefined : { pointerEvents: 'all' }}
+                        >
+                          {entry.stepCount > 0 ? `Details · ${entry.stepCount} step${entry.stepCount === 1 ? '' : 's'}` : 'Details'}
+                        </Button>
+                      </Tooltip>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+                {audit.data.length === 0 && (
+                  <Table.Tr>
+                    <Table.Td colSpan={7} ta="center" c="dimmed" py="lg">
+                      No entries match these filters.
+                    </Table.Td>
+                  </Table.Tr>
+                )}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        </Paper>
       )}
-    </div>
+
+      <Drawer opened={selected !== null} onClose={() => setSelected(null)} position="right" size="lg" title="Audit entry">
+        {/* Mounted only while open, so the steps are fetched when the DBA asks for them. */}
+        {selected && <EntryDetails entry={selected} />}
+      </Drawer>
+    </Stack>
   )
 }

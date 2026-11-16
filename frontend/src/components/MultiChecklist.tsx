@@ -1,6 +1,9 @@
+import { Anchor, Checkbox, Group, Paper, ScrollArea, Stack, Text, TextInput } from '@mantine/core'
 import { useEffect, useState } from 'react'
 import type { OperationParameter } from '../api/operations'
 import type { LookupItem } from '../api/lookups'
+import { fieldLabel } from './fieldKit'
+import { LookupNotice } from './LookupNotice'
 import { NONE, encodeList, lockReason, lockWaitsFor, lookupHint, parseList } from './lookupText'
 import { humanize, useLookupState, type BlockReporter } from './lookupState'
 
@@ -101,72 +104,95 @@ export function MultiChecklist({
   const count = [...selected].filter((v) => allValues.includes(v)).length
 
   return (
-    <div className="rounded border border-slate-200 text-sm" title={param.help ?? undefined}>
-      <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-3 py-1.5">
-        <span className="font-medium text-slate-700">
-          {param.label ?? param.name.replaceAll('_', ' ')}
-          {param.required && <span className="text-red-600"> *</span>}
-        </span>
+    // Paper = a surface with a border; the checklist reads as one boxed control.
+    <Paper withBorder>
+      <Group gap="sm" px="sm" py={6} wrap="wrap" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+        <Text size="sm" fw={500}>
+          {fieldLabel(param)}
+          {param.required && (
+            <Text span c="red">
+              {' '}
+              *
+            </Text>
+          )}
+        </Text>
         {usable && (
           <>
-            <span className="text-xs text-slate-500">
+            <Text size="xs" c="dimmed">
               {count} of {selectable.length} selected
               {param.defaultAll && value === '' && ' (all)'}
-            </span>
-            <button type="button" onClick={() => commit(new Set(allValues))} className="text-xs text-slate-600 underline">
+            </Text>
+            <Anchor component="button" type="button" size="xs" onClick={() => commit(new Set(allValues))}>
               All
-            </button>
-            <button type="button" onClick={() => commit(new Set())} className="text-xs text-slate-600 underline">
+            </Anchor>
+            <Anchor component="button" type="button" size="xs" onClick={() => commit(new Set())}>
               None
-            </button>
+            </Anchor>
             {items.length > 8 && (
-              <input
+              <TextInput
+                size="xs"
+                ml="auto"
+                w={160}
                 type="search"
                 value={filter}
-                onChange={(e) => setFilter(e.target.value)}
+                onChange={(e) => setFilter(e.currentTarget.value)}
                 placeholder="filter…"
-                className="ml-auto rounded border border-slate-300 px-2 py-0.5 text-xs"
+                aria-label={`Filter ${fieldLabel(param)}`}
               />
             )}
           </>
         )}
-      </div>
+      </Group>
 
-      {param.help && <p className="px-3 pt-1 text-xs text-slate-500">{param.help}</p>}
+      {param.help && (
+        <Text size="xs" c="dimmed" px="sm" pt={4}>
+          {param.help}
+        </Text>
+      )}
 
-      <div className="max-h-52 overflow-y-auto px-3 py-1.5">
-        {waitsFor !== null && <p className="text-slate-500">Choose the {humanize(waitsFor)} first: this list then shows only what it can change.</p>}
+      <ScrollArea.Autosize mah={220} type="auto">
+        <Stack gap={4} px="sm" py={6}>
+          {waitsFor !== null && (
+            <Text size="sm" c="dimmed">
+              Choose the {humanize(waitsFor)} first: this list then shows only what it can change.
+            </Text>
+          )}
 
-        {waitsFor === null && state.status === 'loading' && <p className="text-slate-500">Loading…</p>}
+          {waitsFor === null && state.status === 'loading' && (
+            <Text size="sm" c="dimmed">
+              Loading…
+            </Text>
+          )}
 
-        {waitsFor === null && (state.status === 'idle' || state.status === 'waiting' || state.status === 'empty' || state.status === 'unavailable') && (
-          <p className={state.status === 'unavailable' ? 'text-amber-700' : 'text-slate-500'}>
-            {state.reason}
-            {state.retryable && (
-              <button type="button" onClick={state.retry} className="ml-2 underline">
-                Retry
-              </button>
-            )}
-          </p>
-        )}
+          {waitsFor === null && state.status !== 'ready' && state.status !== 'loading' && <LookupNotice state={state} />}
 
-        {usable &&
-          shown.map((item) => {
-            const lock = lockedBy(item)
-            const description = (item.extra as Record<string, unknown>).description
-            return (
-              <label key={item.value} className={`flex items-center gap-2 py-0.5 ${lock ? 'text-slate-400' : ''}`} title={lock ?? (typeof description === 'string' ? description : undefined)}>
-                <input type="checkbox" checked={!lock && selected.has(item.value)} disabled={lock !== undefined} onChange={() => toggle(item.value)} />
-                <span className="font-mono text-xs text-slate-800">{item.value}</span>
-                {lock ? (
-                  <span className="text-xs">🔒 {lock}</span>
-                ) : (
-                  <span className="text-xs text-slate-500">{lookupHint(item)}</span>
-                )}
-              </label>
-            )
-          })}
-      </div>
-    </div>
+          {usable &&
+            shown.map((item) => {
+              const lock = lockedBy(item)
+              const description = (item.extra as Record<string, unknown>).description
+              return (
+                <Checkbox
+                  key={item.value}
+                  size="xs"
+                  checked={!lock && selected.has(item.value)}
+                  disabled={lock !== undefined}
+                  onChange={() => toggle(item.value)}
+                  title={lock ?? (typeof description === 'string' ? description : undefined)}
+                  label={
+                    <Group gap="xs" wrap="nowrap">
+                      <Text size="xs" ff="monospace">
+                        {item.value}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {lock ? `🔒 ${lock}` : lookupHint(item)}
+                      </Text>
+                    </Group>
+                  }
+                />
+              )
+            })}
+        </Stack>
+      </ScrollArea.Autosize>
+    </Paper>
   )
 }

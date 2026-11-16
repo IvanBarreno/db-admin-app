@@ -1,22 +1,37 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Accordion, Button, Group, NumberInput, Select, Stack, Switch, Text, TextInput } from '@mantine/core'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type { OperationParameter } from '../api/operations'
 import { useLookup, type LookupItem } from '../api/lookups'
 import { Combobox, type ComboItem } from './Combobox'
+import { fieldLabel, fieldProps } from './fieldKit'
+import { LookupNotice } from './LookupNotice'
 import { lockReason, lookupHint } from './lookupText'
 import { useLookupState, type BlockReporter } from './lookupState'
 import { MultiChecklist } from './MultiChecklist'
-import { PasswordGeneratorModal } from './PasswordGeneratorModal'
+import { PasswordField } from './PasswordField'
+import { PasswordRows } from './PasswordRows'
 import { RoleChecklist } from './RoleChecklist'
 import { TypedList } from './TypedList'
 
 /**
- * Renders one input per operation parameter, picking the control by its declared type.
+ * Renders one control per operation parameter, picking the control by the parameter's declared type.
  * `values` is keyed by parameter name; `onChange` receives the full updated map so the
  * parent can hold a single piece of state regardless of how many parameters there are.
  *
- * Every field shows a readable label with an ⓘ tooltip (the parameter's `help`). A field fed by a list that cannot
- * be loaded is disabled and says why; `onBlockedChange` receives the reasons of the REQUIRED ones so the page can
- * keep Preview / Execute off and explain it. Parameters marked `advanced` live in a collapsed section.
+ * Which control for which parameter (the "field kit" of the UI plan):
+ *   string / sysname          → TextInput (with click-to-insert domain prefixes when the YAML asks)
+ *   int                       → NumberInput
+ *   bool                      → Switch showing the default until the DBA touches it
+ *   choice                    → Select, with what the chosen option does under it
+ *   login / user / database   → the lookup picker (Combobox.tsx) with hints, locked rows and reasons
+ *   list from a lookup        → MultiChecklist; an add/drop pair of lists → RoleChecklist
+ *   typed list                → TypedList (textarea)
+ *   password                  → PasswordField (show / copy / Generate… modal)
+ *   list + one password each  → PasswordRows (one row per login)
+ *
+ * A field fed by a list that cannot be loaded is disabled and says why; `onBlockedChange` receives the
+ * reasons of the REQUIRED ones so the page can keep Preview / Execute off and explain it.
+ * Parameters marked `advanced` live in a collapsed section.
  */
 export function ParamForm({
   params,
@@ -61,7 +76,8 @@ export function ParamForm({
 
   const doneGroups = new Set<string>()
 
-  function renderField(param: OperationParameter) {
+  /** One parameter → one cell of the form grid (or nothing, when another control already covers it). */
+  function renderField(param: OperationParameter): ReactNode {
     // Two list parameters of one checklist group (add / drop) are ONE checklist of the principal's roles.
     if (param.checklistGroup) {
       if (doneGroups.has(param.checklistGroup)) return null
@@ -70,7 +86,7 @@ export function ParamForm({
       const dropParam = params.find((p) => p.checklistGroup === param.checklistGroup && p.checklistAction === 'drop')
       if (!addParam || !dropParam) return null
       return (
-        <div key={`group-${param.checklistGroup}`} className="w-full">
+        <Wide key={`group-${param.checklistGroup}`}>
           <RoleChecklist
             addParam={addParam}
             dropParam={dropParam}
@@ -79,23 +95,44 @@ export function ParamForm({
             serverName={serverName}
             database={database}
           />
-        </div>
+        </Wide>
+      )
+    }
+
+    // "One password per item": the list and its passwords are ONE control (a row per login). The password
+    // parameter draws nothing by itself; the list parameter draws both.
+    if (param.type === 'Password' && param.generateForEach) return null
+    const perItemPassword = params.find((p) => p.type === 'Password' && p.generateForEach === param.name)
+    if (param.multi && perItemPassword) {
+      return (
+        <Wide key={param.name}>
+          <PasswordRows
+            listParam={param}
+            passwordParam={perItemPassword}
+            values={values}
+            onChange={(patch) => onChange({ ...values, ...patch })}
+            serverName={serverName}
+            database={database}
+            allowProtected={allowProtected}
+            onBlock={report}
+          />
+        </Wide>
       )
     }
 
     // A list with no lookup behind it is typed by the DBA (names of things to create).
     if (param.multi && !param.effectiveSource) {
       return (
-        <div key={param.name} className="w-full">
+        <Wide key={param.name}>
           <TypedList param={param} value={values[param.name] ?? ''} onChange={(v) => set(param.name, v)} onBlock={report} />
-        </div>
+        </Wide>
       )
     }
 
     // Other lists: a checklist of what the server offers.
     if (param.multi) {
       return (
-        <div key={param.name} className="w-full">
+        <Wide key={param.name}>
           <MultiChecklist
             param={param}
             value={values[param.name] ?? ''}
@@ -106,13 +143,14 @@ export function ParamForm({
             allowProtected={allowProtected}
             onBlock={report}
           />
-        </div>
+        </Wide>
       )
     }
 
+    // Passwords carry buttons beside the box, so they get the full row too.
+    const Cell = param.type === 'Password' ? Wide : Narrow
     return (
-      <label key={param.name} className="text-sm">
-        <FieldLabel param={param} />
+      <Cell key={param.name}>
         <ParamInput
           param={param}
           value={values[param.name] ?? ''}
@@ -123,68 +161,96 @@ export function ParamForm({
           allowProtected={allowProtected}
           onBlock={report}
         />
-      </label>
+      </Cell>
     )
   }
 
   const advanced = params.filter((p) => p.advanced)
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-end gap-3">{params.filter((p) => !p.advanced).map(renderField)}</div>
+    <Stack gap="md">
+      <FormGrid>{params.filter((p) => !p.advanced).map(renderField)}</FormGrid>
       {advanced.length > 0 && (
-        <details className="rounded border border-slate-200 px-3 py-2 text-sm">
-          <summary className="cursor-pointer text-slate-600">Advanced options ({advanced.length})</summary>
-          <div className="mt-3 flex flex-wrap items-end gap-3">{advanced.map(renderField)}</div>
-        </details>
+        // Accordion with one item = a section that is closed until the DBA opens it.
+        <Accordion variant="contained" chevronPosition="left">
+          <Accordion.Item value="advanced">
+            <Accordion.Control>
+              <Text size="sm">Advanced options ({advanced.length})</Text>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <FormGrid>{advanced.map(renderField)}</FormGrid>
+            </Accordion.Panel>
+          </Accordion.Item>
+        </Accordion>
       )}
+    </Stack>
+  )
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Layout: a CSS grid that fits as many 280px-wide columns as the page allows. Simple fields take one
+// column; lists and passwords span the whole row (grid-column: 1 / -1 = "from the first line to the last").
+// ---------------------------------------------------------------------------------------------------
+
+function FormGrid({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+        gap: 'var(--mantine-spacing-md)',
+        alignItems: 'start',
+      }}
+    >
+      {children}
     </div>
   )
 }
 
-/** The field's name: its label (or a readable form of the parameter name) and an ⓘ whose tooltip is the help text. */
-function FieldLabel({ param }: { param: OperationParameter }) {
-  return (
-    <span className="mb-1 flex items-center gap-1 text-slate-600">
-      {param.label ?? param.name.replaceAll('_', ' ')}
-      {param.required && <span className="text-red-600"> *</span>}
-      {param.help && (
-        <span title={param.help} aria-label={param.help} className="cursor-help text-xs text-slate-400">
-          ⓘ
-        </span>
-      )}
-    </span>
-  )
+function Narrow({ children }: { children: ReactNode }) {
+  return <div>{children}</div>
 }
 
-/** A choice list with a tooltip on every option and, under it, what the selected option does. */
+function Wide({ children }: { children: ReactNode }) {
+  return <div style={{ gridColumn: '1 / -1' }}>{children}</div>
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------------------------------
+
+/** A choice list; under it, what the selected option does (from the YAML `choice_help`). */
 function ChoiceSelect({
   param,
   value,
   onChange,
-  className,
   disabledChoices,
+  note,
 }: {
   param: OperationParameter
   value: string
   onChange: (value: string) => void
-  className: string
   /** Choices shown but not selectable (e.g. the state the login is already in). */
   disabledChoices?: readonly string[]
+  /** Extra line under the field (e.g. what the server says about the current state). */
+  note?: string
 }) {
   const help = param.choiceHelp ?? {}
+  // The field's own help, then the meaning of the chosen option, then the note: all under the control.
+  const description = [param.help, value ? help[value] : undefined, note].filter(Boolean).join(' — ')
+
   return (
-    <>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className={className} title={help[value]}>
-        <option value="">Select…</option>
-        {param.choices?.map((choice) => (
-          <option key={choice} value={choice} title={help[choice]} disabled={disabledChoices?.includes(choice)}>
-            {choice}
-          </option>
-        ))}
-      </select>
-      {value && help[value] && <span className="mt-0.5 block max-w-72 text-xs text-slate-500">{help[value]}</span>}
-    </>
+    <Select
+      {...fieldProps(param)}
+      description={description || undefined}
+      placeholder="Select…"
+      data={(param.choices ?? []).map((choice) => ({ value: choice, label: choice, disabled: disabledChoices?.includes(choice) }))}
+      // Select speaks `null` for "nothing chosen"; the form speaks ''.
+      value={value === '' ? null : value}
+      onChange={(next) => onChange(next ?? '')}
+      // A required choice cannot be cleared by clicking it again.
+      allowDeselect={!param.required}
+    />
   )
 }
 
@@ -197,7 +263,6 @@ function SuggestedChoice({
   param,
   value,
   onChange,
-  className,
   serverName,
   database,
   values,
@@ -205,7 +270,6 @@ function SuggestedChoice({
   param: OperationParameter
   value: string
   onChange: (value: string) => void
-  className: string
   serverName: string | null
   database: string
   values: Record<string, string>
@@ -229,14 +293,13 @@ function SuggestedChoice({
   const disabledChoices = suggested === null ? undefined : (param.choices ?? []).filter((c) => c !== suggested)
 
   return (
-    <>
-      <ChoiceSelect param={param} value={value} onChange={onChange} className={className} disabledChoices={disabledChoices} />
-      {suggested !== null && (
-        <span className="mt-0.5 block text-xs text-slate-500">
-          Server says {suggest.column} = {rawText}: only {suggested} makes sense.
-        </span>
-      )}
-    </>
+    <ChoiceSelect
+      param={param}
+      value={value}
+      onChange={onChange}
+      disabledChoices={disabledChoices}
+      note={suggested !== null ? `Server says ${suggest.column} = ${rawText}: only ${suggested} makes sense.` : undefined}
+    />
   )
 }
 
@@ -259,48 +322,52 @@ function ParamInput({
   allowProtected: boolean
   onBlock: BlockReporter
 }) {
-  const className = 'rounded border border-slate-300 px-2 py-1.5 text-sm'
-
   switch (param.type) {
-    case 'Bool':
-      // A blank value means "use the default": say which one, instead of an unexplained dash.
+    case 'Bool': {
+      // A blank value means "use the default": the switch SHOWS that default, and the text says it is one.
+      // Flipping the switch writes an explicit "true" / "false".
+      const effective = (value || param.default || 'false') === 'true'
+      const usingDefault = value === '' && param.default != null && param.default !== ''
       return (
-        <select value={value} onChange={(e) => onChange(e.target.value)} className={className}>
-          <option value="">{param.default ? `Default (${param.default})` : '—'}</option>
-          <option value="true">true</option>
-          <option value="false">false</option>
-        </select>
+        <Switch
+          label={fieldLabel(param)}
+          description={[param.help, usingDefault ? `Default: ${param.default}` : undefined].filter(Boolean).join(' — ') || undefined}
+          checked={effective}
+          onChange={(event) => onChange(event.currentTarget.checked ? 'true' : 'false')}
+          // Line the switch up with the text boxes of its neighbours, which have a label row above them.
+          mt="lg"
+        />
       )
+    }
 
     case 'Choice':
       if (param.suggest) {
-        return (
-          <SuggestedChoice
-            param={param}
-            value={value}
-            onChange={onChange}
-            className={className}
-            serverName={serverName}
-            database={database}
-            values={values}
-          />
-        )
+        return <SuggestedChoice param={param} value={value} onChange={onChange} serverName={serverName} database={database} values={values} />
       }
-      return <ChoiceSelect param={param} value={value} onChange={onChange} className={className} />
+      return <ChoiceSelect param={param} value={value} onChange={onChange} />
 
     case 'Password':
-      // generate_for_each: nothing to type — the app creates one password per ticked item when the run starts.
-      if (param.generateForEach) {
-        return (
-          <p className="rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-600">
-            Generated automatically: a different strong password for each item, shown once in the results.
-          </p>
-        )
-      }
-      return <PasswordInput param={param} value={value} onChange={onChange} className={className} />
+      return (
+        <PasswordField
+          {...fieldProps(param)}
+          required={param.required}
+          value={value}
+          onChange={onChange}
+          placeholder={param.generate ? 'blank = generated when the run starts' : undefined}
+        />
+      )
 
     case 'Int':
-      return <input type="number" value={value} onChange={(e) => onChange(e.target.value)} className={className} />
+      return (
+        <NumberInput
+          {...fieldProps(param)}
+          allowDecimal={false}
+          placeholder={param.default ? `default ${param.default}` : undefined}
+          // The form keeps every value as text. NumberInput reports a number, or '' when the box is emptied.
+          value={value === '' ? '' : Number(value)}
+          onChange={(next) => onChange(next === '' ? '' : String(next))}
+        />
+      )
 
     default:
       // Login / User / Database (implicit source) or any string-like parameter with `source:` in the YAML.
@@ -321,14 +388,14 @@ function ParamInput({
       // Sysname, String — plain text (with domain-style prefixes to click when the YAML asks for them).
       return (
         <>
-          <input
-            type="text"
+          <TextInput
+            {...fieldProps(param)}
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(event) => onChange(event.currentTarget.value)}
             autoComplete="off"
             data-lpignore="true"
             data-1p-ignore="true"
-            className={className}
+            spellCheck={false}
           />
           {param.prefixLookup && <PrefixChips lookupId={param.prefixLookup} serverName={serverName} value={value} onChange={onChange} />}
         </>
@@ -353,98 +420,33 @@ function PrefixChips({
 }) {
   const state = useLookupState(serverName, lookupId)
   if (state.status === 'loading') return null
-  if (state.status !== 'ready') return <span className="mt-0.5 block text-xs text-slate-500">{state.reason}</span>
+  if (state.status !== 'ready') return <LookupNotice state={state} />
 
   const name = value.includes('\\') ? value.slice(value.indexOf('\\') + 1) : value
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-1 text-xs">
-      <span className="text-slate-500">Domain:</span>
+    <Group gap={6} mt={6} wrap="wrap">
+      <Text size="xs" c="dimmed">
+        Domain:
+      </Text>
       {state.items.map((item) => (
-        <button
+        <Button
           key={item.value}
-          type="button"
+          // "compact-xs": a button as small as a tag, for a row of quick choices.
+          size="compact-xs"
+          variant="default"
           title={String((item.extra as Record<string, unknown>).source ?? '')}
           onClick={() => onChange(`${item.value}\\${name}`)}
-          className="rounded border border-slate-300 px-1.5 py-0.5 font-mono hover:bg-slate-50"
+          styles={{ label: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
         >
           {item.value}\
-        </button>
+        </Button>
       ))}
-    </div>
+    </Group>
   )
 }
 
 /**
- * Password field: hidden by default, with Show / Copy and a "Generate…" button that opens the generator
- * modal. A generated password lands in the field BEFORE the run, so it can be read and copied first.
- * Leaving a `generate: true` field blank still works: the server then generates one at execute time.
- */
-function PasswordInput({
-  param,
-  value,
-  onChange,
-  className,
-}: {
-  param: OperationParameter
-  value: string
-  onChange: (value: string) => void
-  className: string
-}) {
-  const [shown, setShown] = useState(false)
-  const [generating, setGenerating] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const small = 'rounded border border-slate-300 px-2 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-50'
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-    } catch {
-      // Clipboard can be blocked (non-secure context); "Show" lets the DBA select it by hand.
-    }
-  }
-
-  return (
-    <>
-      <div className="flex items-center gap-1">
-        <input
-          type={shown ? 'text' : 'password'}
-          value={value}
-          onChange={(e) => {
-            onChange(e.target.value)
-            setCopied(false)
-          }}
-          placeholder={param.generate ? 'blank = generate on run' : undefined}
-          autoComplete="new-password"
-          className={`${className} font-mono`}
-        />
-        <button type="button" onClick={() => setShown(!shown)} className={small}>
-          {shown ? 'Hide' : 'Show'}
-        </button>
-        <button type="button" onClick={copy} disabled={!value} className={small}>
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-        <button type="button" onClick={() => setGenerating(true)} className={small}>
-          Generate…
-        </button>
-      </div>
-      {generating && (
-        <PasswordGeneratorModal
-          onClose={() => setGenerating(false)}
-          onUse={(password) => {
-            onChange(password)
-            setShown(true) // show what was generated so it can be checked and copied
-            setCopied(false)
-            setGenerating(false)
-          }}
-        />
-      )}
-    </>
-  )
-}
-
-/**
- * Input fed by a server-side lookup, through the app's own combobox (name first, hint beside it, full list on focus).
+ * Input fed by a server-side lookup, through the app's picker (name first, hint beside it, full list on focus).
  * Free typing stays possible when the field accepts new names. When the field must pick something that exists
  * (`must_exist`) and the list cannot be loaded or is empty, the field is DISABLED and says why; if it is also
  * required, the form is blocked with that reason. A protected login (the account the app connects with) is
@@ -508,36 +510,28 @@ function LookupInput({
   const lockedHit = match && lockOf(match) ? match : null
   const unknown = strict && ready && typed !== '' && !match
 
-  const placeholder = state.status === 'loading' ? 'loading…' : disabled ? state.reason ?? undefined : undefined
+  // One error line under the field: a value that is not on the server, or one that may not be changed.
+  const error = unknown
+    ? 'Not found on this server.'
+    : lockedHit
+      ? `🔒 [${lockedHit.value}]: ${lockOf(lockedHit)}. Pick another.`
+      : undefined
 
   return (
     <>
       <Combobox
+        {...fieldProps(param)}
+        required={param.required}
         value={value}
         onChange={onChange}
         items={comboItems}
         disabled={disabled}
-        placeholder={placeholder}
-        invalid={unknown || lockedHit !== null}
-        className="w-64"
+        placeholder={state.status === 'loading' ? 'loading…' : undefined}
+        error={error}
       />
-      {disabled && (
-        <span className="mt-0.5 block max-w-72 text-xs text-amber-700">
-          {state.reason}
-          {state.retryable && (
-            <button type="button" onClick={state.retry} className="ml-2 underline">
-              Retry
-            </button>
-          )}
-        </span>
-      )}
-      {!disabled && cannotList && <span className="mt-0.5 block max-w-72 text-xs text-slate-500">{state.reason} You can still type a name.</span>}
-      {unknown && <span className="mt-0.5 block text-xs text-red-600">not found on this server</span>}
-      {lockedHit && (
-        <span className="mt-0.5 block max-w-72 text-xs text-red-600">
-          🔒 [{lockedHit.value}]: {lockOf(lockedHit)}. Pick another.
-        </span>
-      )}
+      {/* Why there is no list: as a warning when the field is unusable, as a soft note when typing still works. */}
+      {disabled && <LookupNotice state={state} />}
+      {!disabled && cannotList && <LookupNotice state={state} suffix="You can still type a name." />}
     </>
   )
 }

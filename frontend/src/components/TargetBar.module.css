@@ -1,0 +1,59 @@
+/* TargetBar.module.css — a CSS module: these class names are local to TargetBar.tsx (Vite renames them
+   at build time), so ".bar" here can never clash with a ".bar" somewhere else.
+
+   light-dark(a, b) comes from postcss-preset-mantine: value `a` in the light scheme, `b` in the dark one.
+   The colours are Mantine's own CSS variables (--mantine-color-<name>-<shade 0..9>). */
+
+.bar {
+  /* Stays on screen while the page scrolls, right under the fixed header. AppShell publishes the header's
+     height as a CSS variable; 3.5rem is only a fallback. */
+  position: sticky;
+  top: calc(var(--app-shell-header-offset, 3.5rem) + var(--mantine-spacing-xs));
+  z-index: 10;
+
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-md);
+  border: rem(1px) solid transparent;
+  border-left-width: rem(6px);
+  border-radius: var(--mantine-radius-sm);
+  box-shadow: var(--mantine-shadow-xs);
+  font-size: var(--mantine-font-size-sm);
+}
+
+/* Production: solid red in BOTH schemes. It must never look calm. */
+.bar[data-environment='Production'] {
+  background: var(--mantine-color-red-7);
+  border-color: var(--mantine-color-red-9);
+  color: var(--mantine-color-white);
+}
+
+.bar[data-environment='Test'] {
+  background: light-dark(var(--mantine-color-yellow-1), #4a3b0a);
+  border-color: light-dark(var(--mantine-color-yellow-6), var(--mantine-color-yellow-7));
+  color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-1));
+}
+
+.bar[data-environment='Development'] {
+  background: light-dark(var(--mantine-color-blue-0), #12304f);
+  border-color: light-dark(var(--mantine-color-blue-4), var(--mantine-color-blue-6));
+  color: light-dark(var(--mantine-color-blue-9), var(--mantine-color-blue-1));
+}
+
+.environment {
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.server {
+  font-weight: 600;
+}
+
+.where {
+  opacity: 0.9;
+}
+
+.summary {
+  margin: rem(2px) 0 0;
+  font-weight: 500;
+}

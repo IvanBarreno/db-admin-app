@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react'
+import { Alert, Button, Group, Loader, Paper, Skeleton, Table, Text, TextInput } from '@mantine/core'
+import { IconDownload, IconSearch } from '@tabler/icons-react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useLookup, type LookupItem } from '../api/lookups'
 import { downloadCsv, toCsv } from './csv'
 import { formatCell } from './lookupText'
@@ -26,7 +28,7 @@ export function LookupTable({
   rowAction,
 }: {
   /** Extra last cell per row (e.g. the Explorer's "Use in operation" menu). Omit it for a plain table. */
-  rowAction?: (item: LookupItem) => React.ReactNode
+  rowAction?: (item: LookupItem) => ReactNode
   serverName: string
   lookupId: string
   /** Database for database-scoped lookups. */
@@ -82,68 +84,95 @@ export function LookupTable({
     setSort((current) => (current?.column === column ? (current.descending ? null : { column, descending: true }) : { column, descending: false }))
   }
 
+  const ready = query.isSuccess && !warning
+
   return (
-    <div className="rounded border border-slate-200 bg-white text-sm">
-      <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-3 py-2">
-        {title && <span className="font-medium text-slate-700">{title}</span>}
-        {query.isSuccess && !warning && (
+    <Paper withBorder>
+      <Group gap="sm" px="sm" py={8} wrap="wrap" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+        {title && (
+          <Text size="sm" fw={600}>
+            {title}
+          </Text>
+        )}
+        {ready && (
           <>
-            <span className="text-xs text-slate-500">
+            <Text size="xs" c="dimmed">
               {rows.length === items.length ? `${items.length} rows` : `${rows.length} of ${items.length} rows`}
-            </span>
-            <input
+            </Text>
+            <TextInput
+              size="xs"
               type="search"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => setSearch(e.currentTarget.value)}
               placeholder="search…"
-              className="rounded border border-slate-300 px-2 py-1 text-xs"
+              leftSection={<IconSearch size={14} />}
+              aria-label="Search the table"
             />
-            <button
-              type="button"
-              onClick={exportCsv}
-              disabled={rows.length === 0}
-              className="ml-auto rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 disabled:opacity-50"
-            >
+            <Button ml="auto" size="compact-xs" variant="default" leftSection={<IconDownload size={14} />} onClick={exportCsv} disabled={rows.length === 0}>
               Export CSV
-            </button>
+            </Button>
           </>
         )}
-      </div>
+      </Group>
 
-      {query.isPending && query.fetchStatus !== 'idle' && <p className="px-3 py-2 text-slate-500">Loading…</p>}
-      {query.isError && <p className="px-3 py-2 text-red-700">{query.error.message}</p>}
-      {warning && <p className="px-3 py-2 text-amber-700">{warning}</p>}
-      {query.isSuccess && !warning && items.length === 0 && <p className="px-3 py-2 text-slate-500">{emptyText}</p>}
+      {query.isPending && query.fetchStatus !== 'idle' && (
+        <Group gap="xs" p="sm">
+          <Loader size="xs" />
+          <Text size="sm" c="dimmed">
+            Loading…
+          </Text>
+        </Group>
+      )}
+      {query.isPending && query.fetchStatus === 'idle' && <Skeleton height={0} />}
+      {query.isError && (
+        <Alert color="red" variant="light" m="xs">
+          {query.error.message}
+        </Alert>
+      )}
+      {warning && (
+        <Alert color="yellow" variant="light" m="xs">
+          {warning}
+        </Alert>
+      )}
+      {ready && items.length === 0 && (
+        <Text size="sm" c="dimmed" p="sm">
+          {emptyText}
+        </Text>
+      )}
 
-      {query.isSuccess && !warning && items.length > 0 && (
-        <div className="max-h-[28rem] overflow-auto">
-          <table className="w-full">
-            <thead className="sticky top-0 bg-slate-50 text-left text-xs text-slate-600">
-              <tr>
+      {ready && items.length > 0 && (
+        <Table.ScrollContainer minWidth={400} maxHeight={448} type="native">
+          <Table stickyHeader highlightOnHover fz="sm" verticalSpacing={4}>
+            <Table.Thead>
+              <Table.Tr>
                 {columns.map((c) => (
-                  <th key={c} className="cursor-pointer whitespace-nowrap px-3 py-1.5 font-medium" onClick={() => toggleSort(c)}>
+                  <Table.Th key={c} onClick={() => toggleSort(c)} style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>
                     {c.replaceAll('_', ' ')}
                     {sort?.column === c && (sort.descending ? ' ▼' : ' ▲')}
-                  </th>
+                  </Table.Th>
                 ))}
-                {rowAction && <th className="px-3 py-1.5" />}
-              </tr>
-            </thead>
-            <tbody>
+                {rowAction && <Table.Th />}
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {rows.map((item) => (
-                <tr key={item.value} className="border-t border-slate-100 hover:bg-slate-50">
+                <Table.Tr key={item.value}>
                   {columns.map((c) => (
-                    <td key={c} className={`whitespace-nowrap px-3 py-1 ${c === 'name' ? 'font-mono text-xs' : 'text-slate-700'}`}>
+                    <Table.Td key={c} ff={c === 'name' ? 'monospace' : undefined} fz={c === 'name' ? 'xs' : undefined} style={{ whiteSpace: 'nowrap' }}>
                       {formatCell(cell(item, c))}
-                    </td>
+                    </Table.Td>
                   ))}
-                  {rowAction && <td className="whitespace-nowrap px-3 py-1 text-right">{rowAction(item)}</td>}
-                </tr>
+                  {rowAction && (
+                    <Table.Td ta="right" style={{ whiteSpace: 'nowrap' }}>
+                      {rowAction(item)}
+                    </Table.Td>
+                  )}
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
-    </div>
+    </Paper>
   )
 }

@@ -1,3 +1,4 @@
+import { Alert, Skeleton, Stack, Table, Text } from '@mantine/core'
 import { useLookup } from '../api/lookups'
 import { toAccess } from './accessDiff'
 
@@ -35,11 +36,21 @@ export function AccessComparison({
   const to = useLookup(target ? serverName : null, lookupId, { database, args: { [argName]: target } })
 
   if (!source || !target) {
-    return <p className="text-xs text-slate-500">Pick both to compare what each one holds and what the target will end up with.</p>
+    return (
+      <Text size="xs" c="dimmed">
+        Pick both to compare what each one holds and what the target will end up with.
+      </Text>
+    )
   }
-  if (from.isPending || to.isPending) return <p className="text-xs text-slate-500">Reading both…</p>
+  if (from.isPending || to.isPending) return <Skeleton height={48} />
   const failed = from.isError ? from.error.message : to.isError ? to.error.message : (from.data?.warning ?? to.data?.warning)
-  if (failed) return <p className="text-xs text-amber-700">Could not read their access for the comparison: {failed}</p>
+  if (failed) {
+    return (
+      <Alert color="yellow" variant="light" p="xs">
+        Could not read their access for the comparison: {failed}
+      </Alert>
+    )
+  }
 
   const sourceAccess = toAccess(from.data?.items)
   const targetAccess = toAccess(to.data?.items)
@@ -58,44 +69,47 @@ export function AccessComparison({
   const changing = rows.filter((r) => r.changes).length
 
   return (
-    <div className="space-y-1">
-      <p className="text-xs text-slate-600">
-        {changing === 0 ? 'Nothing to copy: the target already has everything the source has.' : `${changing} change${changing === 1 ? '' : 's'} to [${target}]; nothing is removed.`}
-      </p>
-      <div className="max-h-80 overflow-auto rounded border border-slate-200">
-        <table className="w-full text-left text-xs">
-          <thead className="sticky top-0 bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-2 py-1">Type</th>
-              <th className="px-2 py-1">Item</th>
-              <th className="px-2 py-1">[{source}] (source)</th>
-              <th className="px-2 py-1">[{target}] now</th>
-              <th className="px-2 py-1">[{target}] after</th>
-            </tr>
-          </thead>
-          <tbody>
+    <Stack gap={4}>
+      <Text size="xs">
+        {changing === 0
+          ? 'Nothing to copy: the target already has everything the source has.'
+          : `${changing} change${changing === 1 ? '' : 's'} to [${target}]; nothing is removed.`}
+      </Text>
+      <Table.ScrollContainer minWidth={420} maxHeight={320} type="native">
+        <Table stickyHeader withTableBorder fz="xs" verticalSpacing={3}>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Type</Table.Th>
+              <Table.Th>Item</Table.Th>
+              <Table.Th>[{source}] (source)</Table.Th>
+              <Table.Th>[{target}] now</Table.Th>
+              <Table.Th>[{target}] after</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
             {rows.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-2 py-2 text-slate-500">
+              <Table.Tr>
+                <Table.Td colSpan={5} c="dimmed">
                   Neither holds any roles or explicit permissions.
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             )}
             {rows.map((r) => (
-              <tr key={r.key} className={r.changes ? 'bg-emerald-50' : ''}>
-                <td className="px-2 py-1 text-slate-500">{r.kind === 'ROLE' ? 'Role' : 'Permission'}</td>
-                <td className="px-2 py-1 font-mono">{r.item}</td>
-                <td className="px-2 py-1">{r.source ?? '—'}</td>
-                <td className="px-2 py-1">{r.now ?? '—'}</td>
-                <td className={`px-2 py-1 ${r.changes ? 'font-medium text-emerald-800' : ''}`}>
+              // "light-green" tint behind rows that change, in both colour schemes.
+              <Table.Tr key={r.key} bg={r.changes ? 'var(--mantine-color-green-light)' : undefined}>
+                <Table.Td c="dimmed">{r.kind === 'ROLE' ? 'Role' : 'Permission'}</Table.Td>
+                <Table.Td ff="monospace">{r.item}</Table.Td>
+                <Table.Td>{r.source ?? '—'}</Table.Td>
+                <Table.Td>{r.now ?? '—'}</Table.Td>
+                <Table.Td fw={r.changes ? 600 : undefined} c={r.changes ? 'green' : undefined}>
                   {r.after ?? '—'}
                   {r.changes && ' ← new'}
-                </td>
-              </tr>
+                </Table.Td>
+              </Table.Tr>
             ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
+    </Stack>
   )
 }

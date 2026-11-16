@@ -295,6 +295,11 @@ export interface components {
             status: string;
             detail: string | null;
             parametersJson: string | null;
+            /**
+             * Format: int32
+             * @default 0
+             */
+            stepCount: number;
         };
         AuditStepResponse: {
             /** Format: int32 */
